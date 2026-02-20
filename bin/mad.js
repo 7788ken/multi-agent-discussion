@@ -296,6 +296,11 @@ function startInteractiveWatch(discussionId) {
       lastSeq = msg.seq
     }
 
+    // Refresh result file when there are new messages
+    if (newMessages.length > 0) {
+      discussion.refreshResultFile(discussionId)
+    }
+
     // Check if discussion ended
     const currentStatus = discussion.getStatus(discussionId)
     if (currentStatus.status === 'ended') {
