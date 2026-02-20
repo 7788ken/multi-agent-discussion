@@ -32,7 +32,9 @@ class ClaudeAgent extends AgentBase {
     super({
       name: options.nickname || 'claude',
       pollInterval: options.pollInterval || 3000,
-      baseDir: options.baseDir
+      baseDir: options.baseDir,
+      maxConcurrent: options.maxConcurrent,
+      maxQueueSize: options.maxQueueSize
     })
 
     this.model = options.model || 'sonnet'
@@ -151,6 +153,8 @@ Options:
   --model <model>                       Claude model (default: sonnet)
   --nickname <name>                     Agent nickname (default: claude)
   --interval <ms>                       Polling interval (default: 3000)
+  --max-concurrent <n>                  Max concurrent responses (default: 5)
+  --max-queue-size <n>                  Max queued responses (default: 20)
   --working-dir <dir>                   Working directory for Claude
 
 Examples:
@@ -166,6 +170,8 @@ function parseArgs(args) {
     model: 'sonnet',
     nickname: 'claude',
     interval: 3000,
+    maxConcurrent: 5,
+    maxQueueSize: 20,
     workingDir: process.cwd(),
     showHelp: false
   }
@@ -190,6 +196,16 @@ function parseArgs(args) {
 
     if (arg === '--interval') {
       result.interval = parseInt(args[++i], 10)
+      continue
+    }
+
+    if (arg === '--max-concurrent') {
+      result.maxConcurrent = parseInt(args[++i], 10)
+      continue
+    }
+
+    if (arg === '--max-queue-size') {
+      result.maxQueueSize = parseInt(args[++i], 10)
       continue
     }
 
@@ -249,6 +265,8 @@ async function handleStart(opts) {
     '--model', opts.model,
     '--nickname', opts.nickname,
     '--interval', String(opts.interval),
+    '--max-concurrent', String(opts.maxConcurrent),
+    '--max-queue-size', String(opts.maxQueueSize),
     '--working-dir', opts.workingDir
   ]
 
@@ -327,6 +345,8 @@ async function runAgent(opts) {
     model: opts.model,
     nickname: opts.nickname,
     pollInterval: opts.interval,
+    maxConcurrent: opts.maxConcurrent,
+    maxQueueSize: opts.maxQueueSize,
     workingDir: opts.workingDir
   })
 

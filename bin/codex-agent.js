@@ -4,7 +4,7 @@
  * Codex Agent - Background process that participates in discussions
  *
  * Usage:
- *   codex-agent start [--model gpt-5-codex] [--nickname codex-1]
+ *   codex-agent start [--model gpt-5.3] [--nickname codex-1]
  *   codex-agent stop
  *   codex-agent status
  */
@@ -32,10 +32,13 @@ class CodexAgent extends AgentBase {
     super({
       name: options.nickname || 'codex',
       pollInterval: options.pollInterval || 3000,
-      baseDir: options.baseDir
+      baseDir: options.baseDir,
+      maxConcurrent: options.maxConcurrent,
+      maxQueueSize: options.maxQueueSize
     })
 
-    this.model = options.model || 'gpt-5-codex'
+    this.model = options.model || 'gpt-5.3'
+    this.reasoningEffort = options.reasoningEffort || 'xhigh'
     this.sandbox = options.sandbox || 'workspace-write'
     this.timeout = options.timeout || 300000  // 5 minutes (MCP startup + thinking takes time)
     this.defaultWorkingDir = options.workingDir || process.cwd()
@@ -65,6 +68,7 @@ class CodexAgent extends AgentBase {
     console.log(`[${this.name}] Calling Codex (${this.model}) in ${workingDir} for round ${round}...`)
     const result = await callCodex(prompt, {
       model: this.model,
+      reasoningEffort: this.reasoningEffort,
       sandbox: this.sandbox,
       timeout: this.timeout,
       workingDir
@@ -101,6 +105,7 @@ class CodexAgent extends AgentBase {
 
       const retryResult = await callCodex(prompt, {
         model: this.model,
+        reasoningEffort: this.reasoningEffort,
         sandbox: this.sandbox,
         timeout: this.timeout,
         workingDir
@@ -151,9 +156,12 @@ Usage:
   codex-agent status                    Show agent status
 
 Options:
-  --model <model>                       Codex model (default: gpt-5-codex)
+  --model <model>                       Codex model (default: gpt-5.3)
+  --reasoning-effort <level>            Reasoning effort (default: xhigh)
   --nickname <name>                     Agent nickname (default: codex)
   --interval <ms>                       Polling interval (default: 3000)
+  --max-concurrent <n>                  Max concurrent responses (default: 5)
+  --max-queue-size <n>                  Max queued responses (default: 20)
   --working-dir <dir>                   Working directory for Codex
 
 Examples:
@@ -166,9 +174,12 @@ Examples:
 function parseArgs(args) {
   const result = {
     command: null,
-    model: 'gpt-5-codex',
+    model: 'gpt-5.3',
+    reasoningEffort: 'xhigh',
     nickname: 'codex',
     interval: 3000,
+    maxConcurrent: 5,
+    maxQueueSize: 20,
     workingDir: process.cwd(),
     showHelp: false
   }
@@ -186,6 +197,11 @@ function parseArgs(args) {
       continue
     }
 
+    if (arg === '--reasoning-effort') {
+      result.reasoningEffort = args[++i]
+      continue
+    }
+
     if (arg === '--nickname') {
       result.nickname = args[++i]
       continue
@@ -193,6 +209,16 @@ function parseArgs(args) {
 
     if (arg === '--interval') {
       result.interval = parseInt(args[++i], 10)
+      continue
+    }
+
+    if (arg === '--max-concurrent') {
+      result.maxConcurrent = parseInt(args[++i], 10)
+      continue
+    }
+
+    if (arg === '--max-queue-size') {
+      result.maxQueueSize = parseInt(args[++i], 10)
       continue
     }
 
@@ -252,8 +278,11 @@ async function handleStart(opts) {
     __dirname + '/codex-agent.js',
     '_run',
     '--model', opts.model,
+    '--reasoning-effort', opts.reasoningEffort,
     '--nickname', opts.nickname,
     '--interval', String(opts.interval),
+    '--max-concurrent', String(opts.maxConcurrent),
+    '--max-queue-size', String(opts.maxQueueSize),
     '--working-dir', opts.workingDir
   ]
 
@@ -274,6 +303,7 @@ async function handleStart(opts) {
   console.log(`  PID: ${child.pid}`)
   console.log(`  Nickname: ${opts.nickname}`)
   console.log(`  Model: ${opts.model}`)
+  console.log(`  Reasoning Effort: ${opts.reasoningEffort}`)
   console.log(`  Log: ${logFile}`)
 }
 
@@ -333,8 +363,11 @@ async function runAgent(opts) {
   // This is called when running as a daemon
   const agent = new CodexAgent({
     model: opts.model,
+    reasoningEffort: opts.reasoningEffort,
     nickname: opts.nickname,
     pollInterval: opts.interval,
+    maxConcurrent: opts.maxConcurrent,
+    maxQueueSize: opts.maxQueueSize,
     workingDir: opts.workingDir
   })
 

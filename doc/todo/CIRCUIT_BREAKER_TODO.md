@@ -49,7 +49,7 @@
 
 **[讨论共识改进]** 使用队列模式 + 双上限设计，避免丢失讨论
 
-- [ ] **T1.1** 在 `AgentBase` 构造函数添加并发控制和队列参数
+- [x] **T1.1** 在 `AgentBase` 构造函数添加并发控制和队列参数
   ```javascript
   this.maxConcurrent = options.maxConcurrent || 5   // 同时处理的最大 discussion 数
   this.maxQueueSize = options.maxQueueSize || 20    // 队列上限
@@ -57,7 +57,7 @@
   this.responseQueue = []                            // 待处理队列
   ```
 
-- [ ] **T1.2** 在 `respondToTrigger` 入口添加队列化逻辑
+- [x] **T1.2** 在 `respondToTrigger` 入口添加队列化逻辑
   ```javascript
   if (this.activeCount >= this.maxConcurrent) {
     if (this.responseQueue.length >= this.maxQueueSize) {
@@ -72,7 +72,7 @@
   this.activeCount++
   ```
 
-- [ ] **T1.3** 队列按 `discussionId` 去重，避免同一讨论挤满队列
+- [x] **T1.3** 队列按 `discussionId` 去重，避免同一讨论挤满队列
   ```javascript
   // 入队前检查是否已在队列中
   const alreadyQueued = this.responseQueue.some(item => item.discussionId === discussionId)
@@ -82,7 +82,7 @@
   }
   ```
 
-- [ ] **T1.4** 在响应完成（成功/失败）后递减计数并处理队列
+- [x] **T1.4** 在响应完成（成功/失败）后递减计数并处理队列
   ```javascript
   this.activeCount--
   // 从队列取下一个处理
@@ -92,7 +92,7 @@
   }
   ```
 
-- [ ] **T1.5** 添加 CLI 参数 `--max-concurrent` 和 `--max-queue-size`
+- [x] **T1.5** 添加 CLI 参数 `--max-concurrent` 和 `--max-queue-size`
 
 **文件**：`lib/agent-base.js`，`bin/claude-agent.js`，`bin/codex-agent.js`
 
@@ -102,7 +102,7 @@
 
 **[讨论共识改进]** 使用 `SIGTERM → 短等待 → SIGKILL` 渐进式终止，并加 `settled` 防重
 
-- [ ] **T2.1** 修改 `callClaude` 超时处理（渐进式强杀）
+- [x] **T2.1** 修改 `callClaude` 超时处理（渐进式强杀）
   ```javascript
   let settled = false
 
@@ -137,9 +137,9 @@
   })
   ```
 
-- [ ] **T2.2** 修改 `callCodex` 超时处理（同上）
+- [x] **T2.2** 修改 `callCodex` 超时处理（同上）
 
-- [ ] **T2.3** 添加进程退出指标记录（用于后续监控）
+- [x] **T2.3** 添加进程退出指标记录（用于后续监控）
 
 **文件**：`lib/claude-client.js:161-163`，`lib/codex-client.js:160-162`
 
@@ -149,13 +149,13 @@
 
 **[讨论共识改进]** 按活跃度排序 + 轮转补偿，避免讨论饥饿
 
-- [ ] **T3.1** 添加常量和活跃度追踪
+- [x] **T3.1** 添加常量和活跃度追踪
   ```javascript
   const MAX_WATCHED_DISCUSSIONS = 50
   this.discussionLastWatched = new Map() // discussionId -> timestamp
   ```
 
-- [ ] **T3.2** 修改 `watchAllDiscussions` 实现活跃度排序
+- [x] **T3.2** 修改 `watchAllDiscussions` 实现活跃度排序
   ```javascript
   const discussions = this.discussion.listAll()
     .filter(d => d.status === 'active')
@@ -172,7 +172,7 @@
     .slice(0, MAX_WATCHED_DISCUSSIONS)
   ```
 
-- [ ] **T3.3** 添加日志提示达到上限
+- [x] **T3.3** 添加日志提示达到上限
   ```javascript
   if (activeDiscussions.length > MAX_WATCHED_DISCUSSIONS) {
     console.log(`[${this.name}] Warning: ${activeDiscussions.length} active discussions, limiting to ${MAX_WATCHED_DISCUSSIONS}`)
@@ -187,19 +187,19 @@
 
 **[讨论共识关键点]** Timer 永久泄漏是严重问题，必须与 Phase 1+2 同批实施
 
-- [ ] **T4.1** 添加 `discussionTimers` 映射追踪
+- [x] **T4.1** 添加 `discussionTimers` 映射追踪
   ```javascript
   this.discussionTimers = new Map() // discussionId -> timerId
   ```
 
-- [ ] **T4.2** 在 `watchDiscussion` 中记录 timer
+- [x] **T4.2** 在 `watchDiscussion` 中记录 timer
   ```javascript
   const timer = setInterval(...)
   this.timers.push(timer)
   this.discussionTimers.set(discussionId, timer)  // 新增
   ```
 
-- [ ] **T4.3** 在 `onNewMessages` 中处理 END 消息时显式解绑 timer
+- [x] **T4.3** 在 `onNewMessages` 中处理 END 消息时显式解绑 timer
   ```javascript
   if (msg.type === MESSAGE_TYPES.END) {
     console.log(`[${this.name}] Discussion ${discussionId} ended, cleaning up...`)
@@ -221,7 +221,7 @@
   }
   ```
 
-- [ ] **T4.4** 添加定期清理方法 `_cleanupEndedDiscussions`
+- [x] **T4.4** 添加定期清理方法 `_cleanupEndedDiscussions`
   ```javascript
   _cleanupEndedDiscussions() {
     for (const [id, _] of this.watchedDiscussions) {
@@ -235,7 +235,7 @@
   }
   ```
 
-- [ ] **T4.5** 在 `start()` 中注册清理定时器
+- [x] **T4.5** 在 `start()` 中注册清理定时器
   ```javascript
   const cleanupTimer = setInterval(() => {
     if (this.running) {
@@ -253,13 +253,13 @@
 
 **[讨论共识]** 先做局部熔断，收集指标后再决定是否需要全局熔断
 
-- [ ] **T5.1** 添加按 discussion 的失败计数（局部熔断）
+- [x] **T5.1** 添加按 discussion 的失败计数（局部熔断）
   ```javascript
   this.discussionFailures = new Map() // discussionId -> failureCount
   this.localCircuitThreshold = 5     // 单个 discussion 连续失败次数
   ```
 
-- [ ] **T5.2** 在失败时递增特定 discussion 的失败计数
+- [x] **T5.2** 在失败时递增特定 discussion 的失败计数
   ```javascript
   // 失败时
   const failures = (this.discussionFailures.get(discussionId) || 0) + 1
@@ -271,7 +271,7 @@
   }
   ```
 
-- [ ] **T5.3** 在成功时重置特定 discussion 的失败计数
+- [x] **T5.3** 在成功时重置特定 discussion 的失败计数
   ```javascript
   this.discussionFailures.delete(discussionId)
   ```
@@ -284,15 +284,28 @@
 
 ## 验证清单
 
-- [ ] 测试并发限制：启动 agent 后发送 10 个 followup，确认最多同时处理 `maxConcurrent` 个
-- [ ] 测试队列去重：对同一 discussion 快速发送多个 followup，确认队列中只有一个
-- [ ] 测试队列溢出：发送超过 `maxQueueSize` 个请求，确认 FIFO 丢弃生效
-- [ ] 测试子进程终止：设置超短 timeout，确认 `SIGTERM → SIGKILL` 渐进式终止
-- [ ] 测试 Timer 解绑：结束讨论后确认对应 timer 被清除（不再轮询）
-- [ ] 测试讨论上限：创建 100 个讨论，确认只监控前 50 个
-- [ ] 测试活跃度排序：确认最近活跃的讨论优先被监控
-- [ ] 测试状态清理：结束讨论后等待 1 分钟，确认内存状态被清理
-- [ ] 测试局部熔断：模拟特定 discussion 连续失败，确认该 discussion 被暂停
+- [x] 测试并发限制：启动 agent 后发送 10 个 followup，确认最多同时处理 `maxConcurrent` 个
+- [x] 测试队列去重：对同一 discussion 快速发送多个 followup，确认队列中只有一个
+- [x] 测试队列溢出：发送超过 `maxQueueSize` 个请求，确认 FIFO 丢弃生效
+- [x] 测试子进程终止：设置超短 timeout，确认 `SIGTERM → SIGKILL` 渐进式终止
+- [x] 测试 Timer 解绑：结束讨论后确认对应 timer 被清除（不再轮询）
+- [x] 测试讨论上限：缩规模自动化验证监控上限逻辑（`maxWatchedDiscussions`）
+- [x] 测试活跃度排序：确认最近活跃的讨论优先被监控
+- [x] 测试状态清理：自动化调用 `_cleanupEndedDiscussions` 验证结束讨论状态可清理
+- [x] 测试局部熔断：模拟特定 discussion 连续失败，确认该 discussion 被暂停
+
+### 验证记录（2026-02-20）
+
+- `node --check lib/agent-base.js`
+- `node --check lib/claude-client.js`
+- `node --check lib/codex-client.js`
+- `node --check bin/claude-agent.js`
+- `node --check bin/codex-agent.js`
+- `node --input-type=module`（自动化烟测：并发上限、队列去重/溢出、Timer 解绑、局部熔断）
+- `CLAUDE_BIN=<fake-cli> node --input-type=module`（超时链路：`SIGTERM -> SIGKILL`）
+- `CODEX_BIN=<fake-cli> node --input-type=module`（超时链路：`SIGTERM -> SIGKILL`）
+- `node --input-type=module`（活跃度排序 + `_cleanupEndedDiscussions` 清理）
+- `node --input-type=module`（扫描阶段上限回归：去优先级讨论回收，防止长期运行超上限）
 
 ---
 
