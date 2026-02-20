@@ -1,0 +1,21 @@
+{
+  "name": "multi-agent-discussion",
+  "version": "0.1.0",
+  "description": "Multi-agent discussion system for Claude Code and Codex CLI",
+  "type": "module",
+  "bin": {
+    "mad": "./bin/mad.js",
+    "codex-agent": "./bin/codex-agent.js",
+    "claude-agent": "./bin/claude-agent.js"
+  },
+  "scripts": {
+    "start:codex": "node ./bin/codex-agent.js start",
+    "start:claude": "node ./bin/claude-agent.js start"
+  },
+  "keywords": ["agent", "discussion", "claude", "codex", "collaboration"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

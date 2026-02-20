@@ -9,6 +9,7 @@
 - **多轮讨论**: 支持追问和连续对话
 - **共识分析**: 自动检测意见一致性和置信度
 - **讨论摘要**: 生成结构化的讨论总结
+- **后台 Agent**: 支持 Claude 和 Codex 后台进程自动响应
 
 ## 安装
 
@@ -30,19 +31,12 @@ node bin/mad.js new "数据库选型：PostgreSQL vs MySQL" -p claude,codex
 mad new "数据库选型：PostgreSQL vs MySQL" -p claude,codex
 ```
 
-### 2. 添加响应
+### 2. 查看讨论
 
 ```bash
-# Claude 响应
-mad respond <discussion-id> -f claude -o agree "我推荐 PostgreSQL..." -c 0.8
+# 列出所有讨论
+mad list
 
-# Codex 响应
-mad respond <discussion-id> -f codex -o alternative "我建议 MySQL..." -c 0.75
-```
-
-### 3. 查看讨论
-
-```bash
 # 查看状态
 mad status <discussion-id>
 
@@ -56,29 +50,45 @@ mad analyze <discussion-id>
 mad summary <discussion-id>
 ```
 
-### 4. 追问和结束
+### 3. 追问和结束
 
 ```bash
 # 追问
 mad ask <discussion-id> "考虑到读多写少的场景呢？"
 
-# 结束讨论
+# 结束单个讨论
 mad end <discussion-id> -d "采用 PostgreSQL"
+
+# 结束所有活跃讨论
+mad end all -d "批量结束"
 ```
 
-## 启动 Codex Agent 后台进程
+## 启动 Agent 后台进程
 
-Codex Agent 是一个后台进程，自动监听讨论并调用 Codex CLI 生成响应。
+### Claude Agent
 
 ```bash
 # 启动
-node bin/codex-agent.js start --nickname codex-1
+node bin/claude-agent.js start --nickname claude
+
+# 查看状态
+node bin/claude-agent.js status
+
+# 停止
+node bin/claude-agent.js stop claude
+```
+
+### Codex Agent
+
+```bash
+# 启动
+node bin/codex-agent.js start --nickname codex
 
 # 查看状态
 node bin/codex-agent.js status
 
 # 停止
-node bin/codex-agent.js stop codex-1
+node bin/codex-agent.js stop codex
 ```
 
 ## 命令参考
@@ -87,7 +97,8 @@ node bin/codex-agent.js stop codex-1
 
 | 命令 | 说明 |
 |------|------|
-| `mad new <topic> -p <agents>` | 创建新讨论 |
+| `mad new <topic> -p <agents>` | 创建新讨论（自动进入 watch 模式） |
+| `mad new <topic> --no-watch` | 创建讨论但不进入 watch 模式 |
 | `mad list` | 列出所有讨论 |
 | `mad status <id>` | 查看讨论状态 |
 | `mad history <id>` | 查看完整历史 |
@@ -96,15 +107,16 @@ node bin/codex-agent.js stop codex-1
 | `mad ask <id> <question>` | 发送追问 |
 | `mad respond <id> -f <agent> -o <opinion> <content>` | 添加响应 |
 | `mad end <id> -d <decision>` | 结束讨论 |
+| `mad end all [-d <decision>]` | 结束所有活跃讨论 |
 | `mad watch <id>` | 实时监听讨论 |
 
-### codex-agent CLI
+### Agent CLI
 
 | 命令 | 说明 |
 |------|------|
-| `codex-agent start [options]` | 启动后台进程 |
-| `codex-agent stop [nickname]` | 停止进程 |
-| `codex-agent status` | 查看运行状态 |
+| `<agent>-agent start [options]` | 启动后台进程 |
+| `<agent>-agent stop [nickname]` | 停止进程 |
+| `<agent>-agent status` | 查看运行状态 |
 
 ### 选项
 
@@ -115,15 +127,28 @@ node bin/codex-agent.js stop codex-1
 | `-o, --opinion <type>` | 意见类型: agree/disagree/neutral/alternative |
 | `-c, --confidence <num>` | 置信度 (0-1) |
 | `-d, --decision <text>` | 最终决策 |
-| `--model <model>` | Codex 模型 |
+| `--model <model>` | AI 模型 |
 | `--nickname <name>` | Agent 昵称 |
+| `--interval <ms>` | 轮询间隔 (默认 3000ms) |
+
+### Watch 模式命令
+
+在 watch 模式中（`mad new` 后自动进入）：
+- 输入消息直接发送追问
+- `s` 或 `status` - 查看当前状态
+- `a` 或 `analyze` - 分析共识
+- `h` 或 `history` - 查看历史
+- `r` 或 `result` - 查看结果文件路径
+- `end <decision>` - 结束讨论
+- `q` 或 `quit` - 退出 watch 模式
 
 ## 文件结构
 
 ```
 ~/.multi-agent/
 ├── discussions/          # 讨论文件
-│   └── <id>.jsonl
+│   ├── <id>.jsonl        # 讨论记录
+│   └── <id>-result.md    # 讨论结果（可选）
 ├── pids/                 # Agent 进程 PID
 └── logs/                 # Agent 日志
 ```
@@ -134,46 +159,61 @@ node bin/codex-agent.js stop codex-1
 
 ```json
 {"seq":1,"ts":"2026-02-19T14:00:00Z","from":"user","type":"start","topic":"...","participants":["claude","codex"]}
-{"seq":2,"ts":"2026-02-19T14:00:05Z","from":"claude","type":"response","round":1,"opinion":"agree","content":"...","confidence":0.8}
-{"seq":3,"ts":"2026-02-19T14:00:10Z","from":"codex","type":"response","round":1,"opinion":"alternative","content":"...","confidence":0.7}
+{"seq":2,"ts":"2026-02-19T14:00:05Z","from":"claude","type":"status","status":"thinking","round":1,"content":"claude is thinking..."}
+{"seq":3,"ts":"2026-02-19T14:00:30Z","from":"claude","type":"response","round":1,"opinion":"agree","content":"...","confidence":0.8}
+{"seq":4,"ts":"2026-02-19T14:00:35Z","from":"codex","type":"response","round":1,"opinion":"alternative","content":"...","confidence":0.7}
 ```
+
+### 消息类型
+
+| 类型 | 说明 |
+|------|------|
+| `start` | 讨论开始 |
+| `status` | 状态更新（thinking, retrying 等） |
+| `response` | Agent 响应 |
+| `followup` | 用户追问 |
+| `end` | 讨论结束 |
+| `error` | 错误消息 |
 
 ## 工作流程
 
 ```
 1. 用户发起讨论
    ↓
-2. Claude Code 检测并响应 (手动或自动)
+2. Claude Agent 检测并响应（后台进程）
    ↓
-3. Codex Agent 检测并响应 (后台进程)
+3. Codex Agent 检测并响应（后台进程）
    ↓
-4. 用户追问 (可选)
+4. 用户追问（可选）
    ↓
 5. 重复 2-3
    ↓
 6. 达成共识或用户终止
 ```
 
-## 与 Claude Code 集成
+## 故障排除
 
-我可以通过以下方式参与讨论：
+### Agent 无限循环
 
-1. **手动响应**: 使用 `mad respond` 命令
-2. **读取讨论**: 使用 `mad history` 或 `mad summary`
-3. **分析共识**: 使用 `mad analyze`
+如果 Agent 陷入无限调用循环（表现为系统负载飙升）：
 
-示例流程：
-```
-用户: 发起讨论 "架构设计问题"
-我: 读取讨论 → 分析问题 → 使用 mad respond 添加意见
-Codex Agent: 自动检测 → 调用 codex exec → 添加意见
-用户: 查看双方意见 → 决策
+1. 立即停止 agent：`node bin/claude-agent.js stop`
+2. 结束所有讨论：`mad end all -d "Emergency stop"`
+3. 检查日志：`cat ~/.multi-agent/logs/claude-agent-*.log`
+
+### 超时问题
+
+如果频繁超时，可以增加超时时间：
+
+```bash
+node bin/claude-agent.js start --timeout 300000  # 5 分钟
 ```
 
 ## 依赖
 
 - Node.js >= 18
-- Codex CLI (可选，用于 Codex Agent)
+- Claude CLI（用于 Claude Agent）
+- Codex CLI（用于 Codex Agent）
 
 ## License
 
