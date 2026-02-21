@@ -156,6 +156,7 @@ Options:
   --max-concurrent <n>                  Max concurrent responses (default: 5)
   --max-queue-size <n>                  Max queued responses (default: 20)
   --working-dir <dir>                   Working directory for Claude
+  --base-dir <dir>                      Discussion directory (default: <working-dir>/discussions)
 
 Examples:
   claude-agent start --nickname claude
@@ -173,6 +174,7 @@ function parseArgs(args) {
     maxConcurrent: 5,
     maxQueueSize: 20,
     workingDir: process.cwd(),
+    baseDir: null,
     showHelp: false
   }
 
@@ -214,9 +216,18 @@ function parseArgs(args) {
       continue
     }
 
+    if (arg === '--base-dir') {
+      result.baseDir = args[++i]
+      continue
+    }
+
     if (!result.command) {
       result.command = arg
     }
+  }
+
+  if (!result.baseDir) {
+    result.baseDir = path.join(result.workingDir, 'discussions')
   }
 
   return result
@@ -267,7 +278,8 @@ async function handleStart(opts) {
     '--interval', String(opts.interval),
     '--max-concurrent', String(opts.maxConcurrent),
     '--max-queue-size', String(opts.maxQueueSize),
-    '--working-dir', opts.workingDir
+    '--working-dir', opts.workingDir,
+    '--base-dir', opts.baseDir
   ]
 
   const { spawn } = await import('child_process')
@@ -347,7 +359,8 @@ async function runAgent(opts) {
     pollInterval: opts.interval,
     maxConcurrent: opts.maxConcurrent,
     maxQueueSize: opts.maxQueueSize,
-    workingDir: opts.workingDir
+    workingDir: opts.workingDir,
+    baseDir: opts.baseDir
   })
 
   ensureDirs()

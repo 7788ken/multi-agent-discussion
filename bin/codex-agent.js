@@ -4,7 +4,7 @@
  * Codex Agent - Background process that participates in discussions
  *
  * Usage:
- *   codex-agent start [--model gpt-5.3] [--nickname codex-1]
+ *   codex-agent start [--model gpt-5.3-codex] [--nickname codex-1]
  *   codex-agent stop
  *   codex-agent status
  */
@@ -37,7 +37,7 @@ class CodexAgent extends AgentBase {
       maxQueueSize: options.maxQueueSize
     })
 
-    this.model = options.model || 'gpt-5.3'
+    this.model = options.model || 'gpt-5.3-codex'
     this.reasoningEffort = options.reasoningEffort || 'xhigh'
     this.sandbox = options.sandbox || 'workspace-write'
     this.timeout = options.timeout || 300000  // 5 minutes (MCP startup + thinking takes time)
@@ -83,6 +83,8 @@ class CodexAgent extends AgentBase {
       // Handle timeout with retry
       if (result.error === 'Timeout' || result.error.includes('Timeout')) {
         await this.handleTimeoutWithRetry(discussionId, trigger, allMessages, result.error, round)
+      } else if (this.isProviderUnavailableError(result.error)) {
+        await this.handleRetriableError(discussionId, trigger, allMessages, result.error, round, 'provider unavailable')
       } else {
         this.sendError(discussionId, `Codex error: ${result.error}`, round)
       }
@@ -116,6 +118,8 @@ class CodexAgent extends AgentBase {
         this.responding.delete(discussionId)
         if (retryResult.error === 'Timeout' || retryResult.error.includes('Timeout')) {
           await this.handleTimeoutWithRetry(discussionId, trigger, allMessages, retryResult.error, round)
+        } else if (this.isProviderUnavailableError(retryResult.error)) {
+          await this.handleRetriableError(discussionId, trigger, allMessages, retryResult.error, round, 'provider unavailable')
         } else {
           this.sendError(discussionId, `Codex retry error: ${retryResult.error}`, round)
         }
@@ -144,6 +148,18 @@ class CodexAgent extends AgentBase {
     // Send response
     this.sendResponse(discussionId, round, opinion, finalContent, confidence)
   }
+
+  isProviderUnavailableError(errorMessage = '') {
+    if (!errorMessage || typeof errorMessage !== 'string') return false
+
+    const normalized = errorMessage.toLowerCase()
+    return (
+      normalized.includes('503 service unavailable') ||
+      normalized.includes('no available providers') ||
+      normalized.includes('所有供应商已熔断') ||
+      normalized.includes('无可用渠道')
+    )
+  }
 }
 
 function printUsage() {
@@ -156,13 +172,14 @@ Usage:
   codex-agent status                    Show agent status
 
 Options:
-  --model <model>                       Codex model (default: gpt-5.3)
+  --model <model>                       Codex model (default: gpt-5.3-codex)
   --reasoning-effort <level>            Reasoning effort (default: xhigh)
   --nickname <name>                     Agent nickname (default: codex)
   --interval <ms>                       Polling interval (default: 3000)
   --max-concurrent <n>                  Max concurrent responses (default: 5)
   --max-queue-size <n>                  Max queued responses (default: 20)
   --working-dir <dir>                   Working directory for Codex
+  --base-dir <dir>                      Discussion directory (default: <working-dir>/discussions)
 
 Examples:
   codex-agent start --nickname codex-1
@@ -174,13 +191,14 @@ Examples:
 function parseArgs(args) {
   const result = {
     command: null,
-    model: 'gpt-5.3',
+    model: 'gpt-5.3-codex',
     reasoningEffort: 'xhigh',
     nickname: 'codex',
     interval: 3000,
     maxConcurrent: 5,
     maxQueueSize: 20,
     workingDir: process.cwd(),
+    baseDir: null,
     showHelp: false
   }
 
@@ -227,9 +245,18 @@ function parseArgs(args) {
       continue
     }
 
+    if (arg === '--base-dir') {
+      result.baseDir = args[++i]
+      continue
+    }
+
     if (!result.command) {
       result.command = arg
     }
+  }
+
+  if (!result.baseDir) {
+    result.baseDir = path.join(result.workingDir, 'discussions')
   }
 
   return result
@@ -283,7 +310,8 @@ async function handleStart(opts) {
     '--interval', String(opts.interval),
     '--max-concurrent', String(opts.maxConcurrent),
     '--max-queue-size', String(opts.maxQueueSize),
-    '--working-dir', opts.workingDir
+    '--working-dir', opts.workingDir,
+    '--base-dir', opts.baseDir
   ]
 
   const { spawn } = await import('child_process')
@@ -368,7 +396,8 @@ async function runAgent(opts) {
     pollInterval: opts.interval,
     maxConcurrent: opts.maxConcurrent,
     maxQueueSize: opts.maxQueueSize,
-    workingDir: opts.workingDir
+    workingDir: opts.workingDir,
+    baseDir: opts.baseDir
   })
 
   // Write PID

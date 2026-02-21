@@ -21,9 +21,15 @@ import {
   OPINIONS
 } from '../lib/message.js'
 import readline from 'readline'
+import { spawnSync } from 'child_process'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
-const discussion = new Discussion()
-const coordinator = new Coordinator()
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const workingDir = process.cwd()
+const baseDir = process.env.MULTI_AGENT_BASE_DIR || path.join(workingDir, 'discussions')
+const discussion = new Discussion(baseDir)
+const coordinator = new Coordinator({ baseDir })
 
 function printUsage() {
   console.log(`
@@ -150,6 +156,58 @@ function parseArgs(args) {
   return result
 }
 
+/**
+ * Parse @mention target from follow-up text.
+ * Only one participant can be targeted in a single follow-up.
+ * @param {string} text
+ * @param {string[]} participants
+ * @returns {{ ok: boolean, target: string|null, content: string, error?: string }}
+ */
+function parseFollowupInput(text, participants = []) {
+  const content = (text || '').trim()
+  const mentionRegex = /(?:^|\s)@([a-zA-Z0-9_-]+)/g
+  const mentions = []
+  let match
+
+  while ((match = mentionRegex.exec(content)) !== null) {
+    mentions.push(match[1].toLowerCase())
+  }
+
+  if (mentions.length === 0) {
+    return { ok: true, target: null, content }
+  }
+
+  const participantMap = new Map(
+    (participants || []).map(p => [String(p).toLowerCase(), p])
+  )
+
+  const matchedTargets = [...new Set(
+    mentions
+      .map(name => participantMap.get(name))
+      .filter(Boolean)
+  )]
+
+  if (matchedTargets.length > 1) {
+    return {
+      ok: false,
+      target: null,
+      content,
+      error: `同一条追问只能 @ 一个 agent，当前匹配到: ${matchedTargets.join(', ')}`
+    }
+  }
+
+  if (matchedTargets.length === 0) {
+    return {
+      ok: false,
+      target: null,
+      content,
+      error: `@ 目标不在当前讨论参与者中，可选: ${(participants || []).join(', ')}`
+    }
+  }
+
+  return { ok: true, target: matchedTargets[0], content }
+}
+
 function handleNew(opts) {
   if (!opts.topic) {
     console.error('Error: topic is required')
@@ -159,11 +217,15 @@ function handleNew(opts) {
 
   // Build context with working directory
   const context = {
-    workingDir: process.cwd(),
+    workingDir,
     timestamp: new Date().toISOString()
   }
 
-  const { discussionId, message } = discussion.create(opts.topic, opts.participants, context)
+  const { discussionId } = discussion.create(opts.topic, opts.participants, context)
+
+  // Always restart participant agents for a new discussion so they run in the
+  // current working directory and pick up this discussion immediately.
+  restartAgentsForParticipants(opts.participants, context.workingDir, baseDir)
 
   console.log(`✓ Discussion created: ${discussionId}`)
   console.log(`  Topic: ${opts.topic}`)
@@ -178,6 +240,50 @@ function handleNew(opts) {
   } else {
     console.log(`Waiting for responses from: ${opts.participants.join(', ')}...`)
     console.log(`Run 'mad watch ${discussionId}' to enter watch mode later.`)
+  }
+}
+
+/**
+ * Restart agent processes for participants (best-effort).
+ * @param {string[]} participants
+ * @param {string} workingDir
+ * @param {string} baseDir
+ */
+function restartAgentsForParticipants(participants, workingDir, baseDir) {
+  const supported = new Set(['claude', 'codex'])
+  const uniqueParticipants = [...new Set(participants || [])]
+
+  for (const agentName of uniqueParticipants) {
+    if (!supported.has(agentName)) {
+      console.log(`⚠️  Skip auto-restart for unsupported agent: ${agentName}`)
+      continue
+    }
+
+    const agentCli = path.join(__dirname, `${agentName}-agent.js`)
+
+    // Stop existing process with same nickname first.
+    spawnSync(process.execPath, [agentCli, 'stop', agentName], {
+      stdio: 'ignore'
+    })
+
+    const started = spawnSync(process.execPath, [
+      agentCli,
+      'start',
+      '--nickname', agentName,
+      '--working-dir', workingDir,
+      '--base-dir', baseDir
+    ], {
+      stdio: 'pipe',
+      encoding: 'utf8',
+      cwd: workingDir
+    })
+
+    if (started.status === 0) {
+      console.log(`✓ Agent restarted: ${agentName} (working-dir: ${workingDir})`)
+    } else {
+      const err = (started.stderr || started.stdout || '').trim()
+      console.log(`⚠️  Failed to restart agent ${agentName}${err ? `: ${err}` : ''}`)
+    }
   }
 }
 
@@ -370,8 +476,18 @@ function startInteractiveWatch(discussionId) {
     }
 
     // Treat as follow-up question
-    const msg = discussion.append(discussionId, createFollowupMessage(0, trimmed))
+    const currentStatus = discussion.getStatus(discussionId)
+    const parsed = parseFollowupInput(trimmed, currentStatus.participants || [])
+    if (!parsed.ok) {
+      console.log(`✗ ${parsed.error}`)
+      return
+    }
+
+    const msg = discussion.append(discussionId, createFollowupMessage(0, parsed.content, parsed.target))
     console.log(`✓ Follow-up sent (seq: ${msg.seq})`)
+    if (parsed.target) {
+      console.log(`  Target: ${parsed.target}`)
+    }
   })
 
   rl.on('close', () => {
@@ -434,12 +550,22 @@ function handleAsk(opts) {
     process.exit(1)
   }
 
+  const status = discussion.getStatus(opts.discussionId)
+  const parsed = parseFollowupInput(opts.question, status.participants || [])
+  if (!parsed.ok) {
+    console.error(`Error: ${parsed.error}`)
+    process.exit(1)
+  }
+
   const message = discussion.append(opts.discussionId,
-    createFollowupMessage(0, opts.question)
+    createFollowupMessage(0, parsed.content, parsed.target)
   )
 
   console.log(`✓ Follow-up sent (seq: ${message.seq})`)
   console.log(`  Question: ${opts.question}`)
+  if (parsed.target) {
+    console.log(`  Target: ${parsed.target}`)
+  }
 }
 
 function handleEnd(opts) {
