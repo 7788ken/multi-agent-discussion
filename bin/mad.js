@@ -10,16 +10,20 @@
  *   mad ask <id> "question"             # Ask follow-up question
  *   mad end <id> -d "decision"          # End discussion
  *   mad list                            # List all discussions
+ *   mad ui [id] --port 5188             # Open local HTML UI
  */
 
 import { Discussion } from '../lib/discussion.js'
 import { Coordinator } from '../lib/coordinator.js'
+import { startUiServer } from '../lib/ui-server.js'
 import {
   createFollowupMessage,
+  createModeMessage,
   createEndMessage,
   createResponseMessage,
   OPINIONS
 } from '../lib/message.js'
+import { startTui } from '../lib/tui.js'
 import readline from 'readline'
 import { spawnSync } from 'child_process'
 import path from 'path'
@@ -47,6 +51,10 @@ Usage:
   mad watch <id>                        Watch discussion for new messages
   mad analyze <id>                      Analyze discussion for consensus
   mad summary <id>                      Generate discussion summary
+  mad mode <id> co-dev <on|off>         Toggle co-development mode
+  mad tui [id]                          Open full-screen terminal UI
+  mad ui [id] [--port 5188]             Open local HTML UI
+  mad web [id] [--port 5188]            Alias of 'mad ui'
 
 Watch Mode Commands:
   When in watch mode (after 'mad new'), you can:
@@ -64,13 +72,23 @@ Options:
   -c, --confidence <num>                Confidence level (0-1)
   -w, --watch                           Watch mode (default: true for 'new')
   --no-watch                            Disable auto-watch for 'new'
+  --co-dev                              Enable co-development mode for new discussion
+  --no-co-dev                           Disable co-development mode for new discussion
+  --port <num>                          HTTP port for UI server (default: 5188)
 
 Examples:
   mad new "API design: REST vs GraphQL" -p claude,codex
+  mad new "Implement feature X" -p claude,codex --co-dev
   mad status abc123-api-design
   mad ask abc123 "What about caching?"
+  mad mode abc123 co-dev on
   mad analyze abc123
   mad summary abc123
+  mad tui
+  mad tui abc123
+  mad ui
+  mad ui abc123 --port 5188
+  mad web abc123
   mad end abc123 -d "Using REST with GraphQL federation"
   mad end all -d "Emergency stop"
 `)
@@ -83,11 +101,15 @@ function parseArgs(args) {
     discussionId: null,
     question: null,
     decision: null,
+    modeKey: null,
+    modeValue: null,
     participants: ['claude', 'codex'],
     from: null,
     opinion: OPINIONS.NEUTRAL,
     confidence: 0.7,
-    watch: null  // null = use command default, true = force watch, false = no-watch
+    watch: null, // null = use command default, true = force watch, false = no-watch
+    coDevMode: null, // null = default false for new discussions
+    port: 5188
   }
 
   for (let i = 0; i < args.length; i++) {
@@ -105,6 +127,21 @@ function parseArgs(args) {
 
     if (arg === '--no-watch') {
       result.watch = false
+      continue
+    }
+
+    if (arg === '--port') {
+      result.port = parseInt(args[++i], 10)
+      continue
+    }
+
+    if (arg === '--co-dev') {
+      result.coDevMode = true
+      continue
+    }
+
+    if (arg === '--no-co-dev') {
+      result.coDevMode = false
       continue
     }
 
@@ -138,7 +175,7 @@ function parseArgs(args) {
       result.command = arg
     } else if (result.command === 'new' && !result.topic) {
       result.topic = arg
-    } else if ((result.command === 'status' || result.command === 'history' || result.command === 'watch') && !result.discussionId) {
+    } else if ((result.command === 'status' || result.command === 'history' || result.command === 'watch' || result.command === 'tui' || result.command === 'ui' || result.command === 'web') && !result.discussionId) {
       result.discussionId = arg
     } else if (result.command === 'ask' && !result.discussionId) {
       result.discussionId = arg
@@ -148,6 +185,12 @@ function parseArgs(args) {
       result.discussionId = arg
     } else if (result.command === 'respond' && !result.discussionId) {
       result.discussionId = arg
+    } else if (result.command === 'mode' && !result.discussionId) {
+      result.discussionId = arg
+    } else if (result.command === 'mode' && !result.modeKey) {
+      result.modeKey = arg
+    } else if (result.command === 'mode' && !result.modeValue) {
+      result.modeValue = arg
     } else if ((result.command === 'analyze' || result.command === 'summary') && !result.discussionId) {
       result.discussionId = arg
     }
@@ -208,6 +251,45 @@ function parseFollowupInput(text, participants = []) {
   return { ok: true, target: matchedTargets[0], content }
 }
 
+function parseModeToggleInput(modeKey, modeValue) {
+  const key = String(modeKey || '').trim().toLowerCase()
+  if (!key) {
+    return { ok: false, key: null, enabled: null, error: 'mode key is required' }
+  }
+  if (key !== 'co-dev' && key !== 'co_dev' && key !== 'codev') {
+    return { ok: false, key: null, enabled: null, error: 'only co-dev mode is supported' }
+  }
+
+  const normalizedValue = String(modeValue || '').trim().toLowerCase()
+  const enabledValues = new Set(['on', 'true', '1', 'enable', 'enabled'])
+  const disabledValues = new Set(['off', 'false', '0', 'disable', 'disabled'])
+  if (enabledValues.has(normalizedValue)) {
+    return { ok: true, key: 'co-dev', enabled: true }
+  }
+  if (disabledValues.has(normalizedValue)) {
+    return { ok: true, key: 'co-dev', enabled: false }
+  }
+
+  return {
+    ok: false,
+    key: null,
+    enabled: null,
+    error: `invalid mode value: ${modeValue} (expected on/off)`
+  }
+}
+
+function resolveCoDevModeStatus(status, messages = []) {
+  let enabled = Boolean(status?.context?.coDevMode?.enabled || status?.context?.coDevEnabled)
+
+  for (const msg of messages) {
+    if (msg.type === 'mode' && (msg.key === 'co-dev' || msg.key === 'co_dev' || msg.key === 'codev')) {
+      enabled = Boolean(msg.enabled)
+    }
+  }
+
+  return enabled
+}
+
 function handleNew(opts) {
   if (!opts.topic) {
     console.error('Error: topic is required')
@@ -218,7 +300,10 @@ function handleNew(opts) {
   // Build context with working directory
   const context = {
     workingDir,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    coDevMode: {
+      enabled: opts.coDevMode === true
+    }
   }
 
   const { discussionId } = discussion.create(opts.topic, opts.participants, context)
@@ -231,6 +316,7 @@ function handleNew(opts) {
   console.log(`  Topic: ${opts.topic}`)
   console.log(`  Participants: ${opts.participants.join(', ')}`)
   console.log(`  Working Dir: ${context.workingDir}`)
+  console.log(`  Co-Dev Mode: ${context.coDevMode.enabled ? 'ON' : 'OFF'}`)
   console.log()
 
   // Auto-enter watch mode (default behavior for 'new' command)
@@ -307,6 +393,7 @@ function startInteractiveWatch(discussionId) {
   console.log(`📋 Discussion: ${status.topic}`)
   console.log(`🆔 ID: ${discussionId}`)
   console.log(`👥 Participants: ${status.participants.join(', ')}`)
+  console.log(`⚙️  Co-Dev Mode: ${resolveCoDevModeStatus(status, discussion.readAll(discussionId)) ? 'ON' : 'OFF'}`)
   console.log(`📁 Result File: ${resultFilePath}`)
   console.log(`${'═'.repeat(50)}`)
   console.log(`\n📝 Watch mode started. Commands:`)
@@ -315,6 +402,7 @@ function startInteractiveWatch(discussionId) {
   console.log(`   - 'a' or 'analyze' - analyze consensus`)
   console.log(`   - 'h' or 'history' - show history`)
   console.log(`   - 'r' or 'result' - show result file path`)
+  console.log(`   - 'mode co-dev on|off' - toggle co-development mode`)
   console.log(`   - 'end <decision>' - end discussion`)
   console.log(`   - 'q' or 'quit' - exit\n`)
 
@@ -440,6 +528,7 @@ function startInteractiveWatch(discussionId) {
       console.log(`   Status: ${s.status}`)
       console.log(`   Round: ${s.currentRound}`)
       console.log(`   Messages: ${s.messageCount}`)
+      console.log(`   Co-Dev Mode: ${resolveCoDevModeStatus(s, discussion.readAll(discussionId)) ? 'ON' : 'OFF'}`)
       if (s.status === 'ended') {
         console.log(`   Decision: ${s.decision}`)
       }
@@ -472,6 +561,22 @@ function startInteractiveWatch(discussionId) {
       const decision = trimmed.slice(4).trim()
       discussion.append(discussionId, createEndMessage(0, decision))
       console.log(`✓ Discussion ended with decision: ${decision}`)
+      return
+    }
+
+    if (trimmed.startsWith('mode ')) {
+      const parts = trimmed.split(/\s+/)
+      if (parts.length < 3) {
+        console.log('✗ Usage: mode co-dev on|off')
+        return
+      }
+      const parsedMode = parseModeToggleInput(parts[1], parts[2])
+      if (!parsedMode.ok) {
+        console.log(`✗ ${parsedMode.error}`)
+        return
+      }
+      const modeMsg = discussion.append(discussionId, createModeMessage(0, parsedMode.key, parsedMode.enabled))
+      console.log(`✓ Mode updated (seq: ${modeMsg.seq}): ${parsedMode.key} ${parsedMode.enabled ? 'on' : 'off'}`)
       return
     }
 
@@ -519,6 +624,8 @@ function handleStatus(opts) {
   console.log(`  Participants: ${status.participants.join(', ')}`)
   console.log(`  Messages: ${status.messageCount}`)
   console.log(`  Current Round: ${status.currentRound}`)
+  const coDevMode = resolveCoDevModeStatus(status, discussion.readAll(opts.discussionId))
+  console.log(`  Co-Dev Mode: ${coDevMode ? 'ON' : 'OFF'}`)
 
   if (status.status === 'ended') {
     console.log(`  Decision: ${status.decision}`)
@@ -777,6 +884,83 @@ function handleSummary(opts) {
   console.log(summary)
 }
 
+function handleMode(opts) {
+  if (!opts.discussionId || !opts.modeKey || !opts.modeValue) {
+    console.error('Error: discussion ID, mode key and mode value are required')
+    console.log('Usage: mad mode <discussion-id> co-dev <on|off>')
+    process.exit(1)
+  }
+
+  const status = discussion.getStatus(opts.discussionId)
+  if (!status.exists) {
+    console.error(`Discussion not found: ${opts.discussionId}`)
+    process.exit(1)
+  }
+
+  if (status.status === 'ended') {
+    console.error(`Discussion already ended: ${opts.discussionId}`)
+    process.exit(1)
+  }
+
+  const parsedMode = parseModeToggleInput(opts.modeKey, opts.modeValue)
+  if (!parsedMode.ok) {
+    console.error(`Error: ${parsedMode.error}`)
+    process.exit(1)
+  }
+
+  const message = discussion.append(opts.discussionId, createModeMessage(0, parsedMode.key, parsedMode.enabled))
+  console.log(`✓ Mode updated (seq: ${message.seq})`)
+  console.log(`  Discussion: ${opts.discussionId}`)
+  console.log(`  ${parsedMode.key}: ${parsedMode.enabled ? 'on' : 'off'}`)
+}
+
+async function handleTui(opts) {
+  await startTui({
+    discussion,
+    coordinator,
+    createFollowupMessage,
+    createEndMessage,
+    parseFollowupInput,
+    initialDiscussionId: opts.discussionId || null
+  })
+}
+
+async function handleUi(opts) {
+  if (!Number.isInteger(opts.port) || opts.port <= 0 || opts.port > 65535) {
+    console.error(`Error: invalid port ${opts.port}`)
+    process.exit(1)
+  }
+
+  if (opts.discussionId) {
+    const status = discussion.getStatus(opts.discussionId)
+    if (!status.exists) {
+      console.error(`Error: discussion not found: ${opts.discussionId}`)
+      process.exit(1)
+    }
+  }
+
+  const serverInfo = await startUiServer({
+    baseDir,
+    port: opts.port
+  })
+
+  const initialPath = opts.discussionId
+    ? `/?discussion=${encodeURIComponent(opts.discussionId)}`
+    : '/'
+  const uiUrl = `${serverInfo.url}${initialPath}`
+
+  console.log(`✓ UI server started`)
+  console.log(`  URL: ${uiUrl}`)
+  console.log(`  Base Dir: ${baseDir}`)
+  console.log(`  Press Ctrl+C to stop`)
+
+  process.on('SIGINT', () => {
+    serverInfo.server.close(() => {
+      process.exit(0)
+    })
+  })
+}
+
 async function main() {
   const args = process.argv.slice(2)
   const opts = parseArgs(args)
@@ -811,11 +995,21 @@ async function main() {
     case 'respond':
       handleRespond(opts)
       break
+    case 'mode':
+      handleMode(opts)
+      break
     case 'analyze':
       handleAnalyze(opts)
       break
     case 'summary':
       handleSummary(opts)
+      break
+    case 'tui':
+      await handleTui(opts)
+      break
+    case 'ui':
+    case 'web':
+      await handleUi(opts)
       break
     default:
       console.error(`Unknown command: ${opts.command}`)

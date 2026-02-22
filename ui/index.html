@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi-Agent Discussion UI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Multi-Agent Discussion</p>
+          <h1>讨论控制台</h1>
+        </div>
+        <button id="refresh-btn" class="btn btn-secondary" type="button">刷新</button>
+      </header>
+
+      <main class="layout">
+        <aside class="panel discussions-panel">
+          <div class="panel-header">
+            <h2>讨论列表</h2>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span id="discussions-count" class="muted">0</span>
+              <button id="new-discussion-btn" class="btn btn-primary" type="button">新建讨论</button>
+            </div>
+          </div>
+          <div id="discussion-list" class="discussion-list"></div>
+        </aside>
+
+        <section class="panel detail-panel">
+          <div id="empty-state" class="empty-state">请选择一个讨论查看详情</div>
+
+          <div id="detail-content" class="hidden">
+            <div class="panel-header">
+              <h2 id="detail-topic">-</h2>
+              <span id="detail-status" class="badge">-</span>
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta-item">
+                <span class="meta-label">Discussion ID</span>
+                <span id="detail-id" class="meta-value">-</span>
+              </div>
+              <div class="meta-item">
+                <span class="meta-label">当前轮次</span>
+                <span id="detail-round" class="meta-value">-</span>
+              </div>
+              <div class="meta-item meta-item-full">
+                <span class="meta-label">参与者</span>
+                <span id="detail-participants" class="meta-value">-</span>
+              </div>
+              <div class="meta-item meta-item-full">
+                <span class="meta-label">协作推进模式</span>
+                <span id="detail-codev" class="meta-value">-</span>
+              </div>
+            </div>
+
+            <div class="section">
+              <h3>共识分析</h3>
+              <div id="consensus-box" class="consensus-box"></div>
+            </div>
+
+            <div class="section">
+              <h3>最近消息</h3>
+              <div id="recent-messages" class="messages"></div>
+            </div>
+
+            <div class="forms-grid">
+              <form id="mode-form" class="section card-form">
+                <h3>模式开关</h3>
+                <label class="checkbox-row">
+                  <input id="mode-enabled-input" type="checkbox" />
+                  开启协作推进模式（基于项目改动互评并给出下一步）
+                </label>
+                <button class="btn btn-secondary" type="submit">更新模式</button>
+              </form>
+
+              <form id="followup-form" class="section card-form">
+                <h3>追问</h3>
+                <label>
+                  追问内容
+                  <textarea id="followup-input" rows="3" required placeholder="请输入追问内容"></textarea>
+                </label>
+                <label>
+                  目标 Agent（可选）
+                  <select id="followup-target"></select>
+                </label>
+                <button class="btn btn-primary" type="submit">发送追问</button>
+              </form>
+
+              <form id="end-form" class="section card-form">
+                <h3>结束讨论</h3>
+                <label>
+                  最终决策
+                  <textarea id="decision-input" rows="3" placeholder="请输入最终决策"></textarea>
+                </label>
+                <label class="checkbox-row">
+                  <input id="consensus-input" type="checkbox" checked />
+                  标记为已达成共识
+                </label>
+                <button class="btn btn-danger" type="submit">结束讨论</button>
+              </form>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <p id="toast" class="toast hidden"></p>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

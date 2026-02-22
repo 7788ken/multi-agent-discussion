@@ -10,6 +10,8 @@
 - **共识分析**: 自动检测意见一致性和置信度
 - **讨论摘要**: 生成结构化的讨论总结
 - **后台 Agent**: 支持 Claude 和 Codex 后台进程自动响应
+- **简易 HTML 界面**: 本地网页查看讨论、追问与结束讨论
+- **协作推进模式（可开关）**: 基于项目最新改动互评、找风险，并可直接落地小改动后反馈验证结果
 
 ## 安装
 
@@ -29,6 +31,9 @@ node bin/mad.js new "数据库选型：PostgreSQL vs MySQL" -p claude,codex
 
 # 或链接后直接使用
 mad new "数据库选型：PostgreSQL vs MySQL" -p claude,codex
+
+# 创建讨论并开启协作推进模式
+mad new "这个模块下一步怎么改更稳妥?" -p claude,codex --co-dev
 ```
 
 ### 2. 查看讨论
@@ -48,6 +53,17 @@ mad analyze <discussion-id>
 
 # 生成摘要
 mad summary <discussion-id>
+
+# 打开本地 HTML 界面（默认端口 5188）
+mad ui
+mad ui <discussion-id> --port 5188
+mad web <discussion-id>  # ui 别名
+
+# 开启/关闭协作推进模式
+mad mode <discussion-id> co-dev on
+mad mode <discussion-id> co-dev off
+
+# 说明：co-dev 开启后，agent 会结合项目快照给建议，并通常直接提交小范围代码改动（不 commit/push）
 ```
 
 ### 3. 追问和结束
@@ -109,6 +125,10 @@ node bin/codex-agent.js stop codex
 | `mad end <id> -d <decision>` | 结束讨论 |
 | `mad end all [-d <decision>]` | 结束所有活跃讨论 |
 | `mad watch <id>` | 实时监听讨论 |
+| `mad mode <id> co-dev <on\|off>` | 切换协作推进模式 |
+| `mad tui [id]` | 打开全屏 TUI（讨论列表/状态/消息/快捷操作） |
+| `mad ui [id] [--port 5188]` | 打开本地 HTML 界面 |
+| `mad web [id] [--port 5188]` | `mad ui` 别名 |
 
 ### Agent CLI
 
@@ -127,9 +147,22 @@ node bin/codex-agent.js stop codex
 | `-o, --opinion <type>` | 意见类型: agree/disagree/neutral/alternative |
 | `-c, --confidence <num>` | 置信度 (0-1) |
 | `-d, --decision <text>` | 最终决策 |
+| `--co-dev` | 创建讨论时开启协作推进模式 |
+| `--no-co-dev` | 创建讨论时关闭协作推进模式（默认） |
+| `--port <num>` | UI 服务端口（默认 5188） |
 | `--model <model>` | AI 模型 |
 | `--nickname <name>` | Agent 昵称 |
 | `--interval <ms>` | 轮询间隔 (默认 3000ms) |
+
+## HTML UI API
+
+`mad ui` 启动本地服务后，可使用以下 API：
+
+- `GET /api/discussions`
+- `GET /api/discussions/:id`
+- `POST /api/discussions/:id/followup`
+- `POST /api/discussions/:id/end`
+- `POST /api/discussions/:id/mode`（body: `{"enabled": true|false}`）
 
 ### Watch 模式命令
 
@@ -139,8 +172,19 @@ node bin/codex-agent.js stop codex
 - `a` 或 `analyze` - 分析共识
 - `h` 或 `history` - 查看历史
 - `r` 或 `result` - 查看结果文件路径
+- `mode co-dev on|off` - 切换协作推进模式
 - `end <decision>` - 结束讨论
 - `q` 或 `quit` - 退出 watch 模式
+
+### TUI 模式快捷键
+
+在 `mad tui` 模式中：
+- `↑` / `↓`（或 `k` / `j`）- 切换讨论
+- `r` - 刷新数据
+- `a` - 分析当前讨论
+- `f` - 输入并发送追问（支持 `@agent`）
+- `e` - 输入并结束讨论
+- `q` - 退出 TUI
 
 ## 文件结构
 
@@ -172,6 +216,7 @@ node bin/codex-agent.js stop codex
 | `status` | 状态更新（thinking, retrying 等） |
 | `response` | Agent 响应 |
 | `followup` | 用户追问 |
+| `mode` | 模式切换（如 co-dev on/off） |
 | `end` | 讨论结束 |
 | `error` | 错误消息 |
 
