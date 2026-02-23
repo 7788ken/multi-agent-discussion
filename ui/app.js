@@ -2,6 +2,7 @@ const state = {
   discussions: [],
   selectedId: null,
   detail: null,
+  settings: null,
   loading: false
 }
 
@@ -28,6 +29,11 @@ const elements = {
   endForm: document.getElementById('end-form'),
   decisionInput: document.getElementById('decision-input'),
   consensusInput: document.getElementById('consensus-input'),
+  settingsForm: document.getElementById('settings-form'),
+  settingsClaudeConcurrent: document.getElementById('settings-claude-concurrent'),
+  settingsCodexConcurrent: document.getElementById('settings-codex-concurrent'),
+  settingsRetryMaxAttempts: document.getElementById('settings-retry-max-attempts'),
+  settingsRestartAgents: document.getElementById('settings-restart-agents'),
   toast: document.getElementById('toast')
 }
 
@@ -239,6 +245,62 @@ async function loadDetail(discussionId) {
   }
 }
 
+function parsePositiveIntegerInput(value) {
+  const parsed = Number.parseInt(String(value || '').trim(), 10)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null
+  }
+  return parsed
+}
+
+function buildManualRestartCommands(claudeConcurrent, codexConcurrent) {
+  return [
+    `node bin/claude-agent.js stop claude`,
+    `node bin/claude-agent.js start --nickname claude --max-concurrent ${claudeConcurrent}`,
+    `node bin/codex-agent.js stop codex`,
+    `node bin/codex-agent.js start --nickname codex --max-concurrent ${codexConcurrent}`
+  ].join('\n')
+}
+
+function hasSettingsElements() {
+  return Boolean(
+    elements.settingsForm &&
+    elements.settingsClaudeConcurrent &&
+    elements.settingsCodexConcurrent &&
+    elements.settingsRetryMaxAttempts
+  )
+}
+
+function renderSettings() {
+  if (!state.settings || !hasSettingsElements()) return
+
+  const claudeConcurrent = state.settings.agentMaxConcurrent?.claude
+  const codexConcurrent = state.settings.agentMaxConcurrent?.codex
+  const retryMaxAttempts = state.settings.retryMaxAttempts
+
+  if (Number.isInteger(claudeConcurrent)) {
+    elements.settingsClaudeConcurrent.value = String(claudeConcurrent)
+  }
+  if (Number.isInteger(codexConcurrent)) {
+    elements.settingsCodexConcurrent.value = String(codexConcurrent)
+  }
+
+  elements.settingsRetryMaxAttempts.value = Number.isInteger(retryMaxAttempts)
+    ? String(retryMaxAttempts)
+    : '-'
+}
+
+async function loadSettings() {
+  if (!hasSettingsElements()) return
+
+  try {
+    state.settings = await request('/api/settings')
+    renderSettings()
+  } catch (err) {
+    showToast(`加载设置失败: ${err.message}`, 'error')
+  }
+}
+
 async function handleFollowupSubmit(event) {
   event.preventDefault()
   if (!state.selectedId) return
@@ -325,6 +387,86 @@ async function handleNewDiscussion() {
   }
 }
 
+async function handleSettingsSubmit(event) {
+  event.preventDefault()
+  if (!hasSettingsElements()) return
+
+  const claudeConcurrent = parsePositiveIntegerInput(elements.settingsClaudeConcurrent.value)
+  const codexConcurrent = parsePositiveIntegerInput(elements.settingsCodexConcurrent.value)
+
+  if (!claudeConcurrent || !codexConcurrent) {
+    showToast('并发必须为大于 0 的整数', 'error')
+    return
+  }
+
+  try {
+    const payload = {
+      agentMaxConcurrent: {
+        claude: claudeConcurrent,
+        codex: codexConcurrent
+      }
+    }
+    const result = await request('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    })
+
+    state.settings = result
+    renderSettings()
+    showToast('设置已保存', 'success')
+  } catch (err) {
+    showToast(err.message, 'error')
+  }
+}
+
+async function handleSettingsRestartAgents(event) {
+  event.preventDefault()
+  if (!hasSettingsElements()) return
+
+  const claudeConcurrent = parsePositiveIntegerInput(elements.settingsClaudeConcurrent.value)
+  const codexConcurrent = parsePositiveIntegerInput(elements.settingsCodexConcurrent.value)
+
+  if (!claudeConcurrent || !codexConcurrent) {
+    showToast('并发必须为大于 0 的整数', 'error')
+    return
+  }
+
+  try {
+    // 先保存设置
+    const payload = {
+      agentMaxConcurrent: {
+        claude: claudeConcurrent,
+        codex: codexConcurrent
+      }
+    }
+    const result = await request('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    })
+
+    state.settings = result
+    renderSettings()
+
+    const commands = buildManualRestartCommands(claudeConcurrent, codexConcurrent)
+    let copied = false
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(commands)
+        copied = true
+      } catch {}
+    }
+
+    if (copied) {
+      showToast('设置已保存，重启命令已复制到剪贴板。', 'success')
+    } else {
+      console.info(`请手动执行以下命令重启 agent:\n${commands}`)
+      showToast('设置已保存。请在浏览器控制台查看重启命令。', 'success')
+    }
+  } catch (err) {
+    showToast(err.message, 'error')
+  }
+}
+
 function bindEvents() {
   elements.refreshBtn.addEventListener('click', () => {
     loadDiscussions()
@@ -343,10 +485,17 @@ function bindEvents() {
   elements.followupForm.addEventListener('submit', handleFollowupSubmit)
   elements.endForm.addEventListener('submit', handleEndSubmit)
   elements.modeForm.addEventListener('submit', handleModeSubmit)
+  if (elements.settingsForm) {
+    elements.settingsForm.addEventListener('submit', handleSettingsSubmit)
+    if (elements.settingsRestartAgents) {
+      elements.settingsRestartAgents.addEventListener('click', handleSettingsRestartAgents)
+    }
+  }
 }
 
 function bootstrap() {
   bindEvents()
+  loadSettings()
   loadDiscussions()
   setInterval(() => {
     if (!state.loading) {

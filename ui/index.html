@@ -101,6 +101,29 @@
                 </label>
                 <button class="btn btn-danger" type="submit">结束讨论</button>
               </form>
+
+              <form id="settings-form" class="section card-form">
+                <h3>并发设置</h3>
+                <label>
+                  Claude 并发
+                  <input id="settings-claude-concurrent" type="number" min="1" step="1" required />
+                </label>
+                <label>
+                  Codex 并发
+                  <input id="settings-codex-concurrent" type="number" min="1" step="1" required />
+                </label>
+                <label>
+                  最大重试次数（只读）
+                  <input id="settings-retry-max-attempts" type="text" readonly />
+                </label>
+                <p class="form-hint">保存后不会自动重启，右侧按钮会复制重启命令。</p>
+                <div class="form-actions">
+                  <button class="btn btn-secondary" type="submit">保存设置</button>
+                  <button id="settings-restart-agents" class="btn btn-primary" type="button" style="margin-left: 8px;">
+                    保存并复制重启命令
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </section>

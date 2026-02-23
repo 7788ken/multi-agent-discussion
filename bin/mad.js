@@ -4,7 +4,7 @@
  * Multi-Agent Discussion CLI
  *
  * Usage:
- *   mad new "topic" -p claude,codex    # Create new discussion
+ *   mad new "topic" -p claude,codex --agent-max-concurrent "claude=1,codex=2"
  *   mad status <id>                     # Show discussion status
  *   mad history <id>                    # Show discussion history
  *   mad ask <id> "question"             # Ask follow-up question
@@ -26,6 +26,7 @@ import {
 import { startTui } from '../lib/tui.js'
 import readline from 'readline'
 import { spawnSync } from 'child_process'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -34,6 +35,8 @@ const workingDir = process.cwd()
 const baseDir = process.env.MULTI_AGENT_BASE_DIR || path.join(workingDir, 'discussions')
 const discussion = new Discussion(baseDir)
 const coordinator = new Coordinator({ baseDir })
+const SUPPORTED_AUTO_RESTART_AGENTS = new Set(['claude', 'codex'])
+const AGENT_MAX_CONCURRENT_FILE = 'agent-max-concurrent.json'
 
 function printUsage() {
   console.log(`
@@ -72,13 +75,17 @@ Options:
   -c, --confidence <num>                Confidence level (0-1)
   -w, --watch                           Watch mode (default: true for 'new')
   --no-watch                            Disable auto-watch for 'new'
+  --no-restart-agents                   Disable auto-restart for 'new'
   --co-dev                              Enable co-development mode for new discussion
   --no-co-dev                           Disable co-development mode for new discussion
+  --agent-max-concurrent <mapping>      Per-agent max concurrency, e.g. "claude=1,codex=2"
   --port <num>                          HTTP port for UI server (default: 5188)
 
 Examples:
   mad new "API design: REST vs GraphQL" -p claude,codex
   mad new "Implement feature X" -p claude,codex --co-dev
+  mad new "Use existing agents" -p claude,codex --no-restart-agents
+  mad new "Load test" -p claude,codex --agent-max-concurrent "claude=1,codex=2"
   mad status abc123-api-design
   mad ask abc123 "What about caching?"
   mad mode abc123 co-dev on
@@ -92,6 +99,90 @@ Examples:
   mad end abc123 -d "Using REST with GraphQL federation"
   mad end all -d "Emergency stop"
 `)
+}
+
+function parseAgentMaxConcurrent(value) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    return {
+      ok: false,
+      error: '--agent-max-concurrent requires a value, e.g. "claude=1,codex=2"'
+    }
+  }
+
+  const mapping = {}
+  const items = value.split(',').map(item => item.trim())
+
+  for (const item of items) {
+    if (!item) {
+      return {
+        ok: false,
+        error: 'invalid --agent-max-concurrent format: empty item found'
+      }
+    }
+
+    const pair = item.split('=')
+    if (pair.length !== 2) {
+      return {
+        ok: false,
+        error: `invalid --agent-max-concurrent item: "${item}" (expected agent=number)`
+      }
+    }
+
+    const agent = pair[0].trim().toLowerCase()
+    const rawMaxConcurrent = pair[1].trim()
+
+    if (!agent) {
+      return {
+        ok: false,
+        error: `invalid --agent-max-concurrent item: "${item}" (missing agent name)`
+      }
+    }
+
+    if (!SUPPORTED_AUTO_RESTART_AGENTS.has(agent)) {
+      return {
+        ok: false,
+        error: `unsupported agent "${agent}" in --agent-max-concurrent (supported: ${[...SUPPORTED_AUTO_RESTART_AGENTS].join(', ')})`
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mapping, agent)) {
+      return {
+        ok: false,
+        error: `duplicate agent "${agent}" in --agent-max-concurrent`
+      }
+    }
+
+    if (!/^\d+$/.test(rawMaxConcurrent)) {
+      return {
+        ok: false,
+        error: `invalid max-concurrent for agent "${agent}": "${rawMaxConcurrent}" (must be a positive integer)`
+      }
+    }
+
+    const maxConcurrent = parseInt(rawMaxConcurrent, 10)
+    if (maxConcurrent <= 0) {
+      return {
+        ok: false,
+        error: `invalid max-concurrent for agent "${agent}": ${maxConcurrent} (must be > 0)`
+      }
+    }
+
+    mapping[agent] = maxConcurrent
+  }
+
+  return { ok: true, mapping }
+}
+
+function normalizeParticipantName(name) {
+  const raw = String(name || '').trim()
+  if (!raw) return ''
+
+  const normalized = raw.toLowerCase()
+  if (SUPPORTED_AUTO_RESTART_AGENTS.has(normalized)) {
+    return normalized
+  }
+
+  return raw
 }
 
 function parseArgs(args) {
@@ -108,8 +199,11 @@ function parseArgs(args) {
     opinion: OPINIONS.NEUTRAL,
     confidence: 0.7,
     watch: null, // null = use command default, true = force watch, false = no-watch
+    restartAgents: true, // default true for backward compatibility
     coDevMode: null, // null = default false for new discussions
-    port: 5188
+    agentMaxConcurrent: null,
+    port: 5188,
+    parseError: null
   }
 
   for (let i = 0; i < args.length; i++) {
@@ -130,6 +224,11 @@ function parseArgs(args) {
       continue
     }
 
+    if (arg === '--no-restart-agents') {
+      result.restartAgents = false
+      continue
+    }
+
     if (arg === '--port') {
       result.port = parseInt(args[++i], 10)
       continue
@@ -145,8 +244,22 @@ function parseArgs(args) {
       continue
     }
 
+    if (arg === '--agent-max-concurrent') {
+      const mappingValue = args[++i]
+      const parsed = parseAgentMaxConcurrent(mappingValue)
+      if (!parsed.ok) {
+        result.parseError = parsed.error
+        return result
+      }
+      result.agentMaxConcurrent = parsed.mapping
+      continue
+    }
+
     if (arg === '-p' || arg === '--participants') {
-      result.participants = args[++i].split(',').map(s => s.trim())
+      result.participants = args[++i]
+        .split(',')
+        .map(normalizeParticipantName)
+        .filter(Boolean)
       continue
     }
 
@@ -290,6 +403,70 @@ function resolveCoDevModeStatus(status, messages = []) {
   return enabled
 }
 
+function normalizeAgentMaxConcurrentConfig(config) {
+  const normalized = {}
+  if (!config || typeof config !== 'object') {
+    return normalized
+  }
+
+  for (const [agentName, rawMaxConcurrent] of Object.entries(config)) {
+    const agent = String(agentName || '').trim().toLowerCase()
+    if (!SUPPORTED_AUTO_RESTART_AGENTS.has(agent)) {
+      continue
+    }
+
+    let maxConcurrent = null
+    if (Number.isInteger(rawMaxConcurrent)) {
+      maxConcurrent = rawMaxConcurrent
+    } else if (typeof rawMaxConcurrent === 'string' && /^\d+$/.test(rawMaxConcurrent.trim())) {
+      maxConcurrent = parseInt(rawMaxConcurrent.trim(), 10)
+    }
+
+    if (Number.isInteger(maxConcurrent) && maxConcurrent > 0) {
+      normalized[agent] = maxConcurrent
+    }
+  }
+
+  return normalized
+}
+
+function readAgentMaxConcurrentConfig(baseDir) {
+  const configPath = path.join(baseDir, AGENT_MAX_CONCURRENT_FILE)
+  if (!fs.existsSync(configPath)) {
+    return {}
+  }
+
+  try {
+    const raw = fs.readFileSync(configPath, 'utf8')
+    if (!raw.trim()) {
+      return {}
+    }
+    return normalizeAgentMaxConcurrentConfig(JSON.parse(raw))
+  } catch (error) {
+    console.log(`⚠️  Failed to read persisted agent max concurrency config: ${error.message}`)
+    return {}
+  }
+}
+
+function writeAgentMaxConcurrentConfig(baseDir, config) {
+  const configPath = path.join(baseDir, AGENT_MAX_CONCURRENT_FILE)
+  const normalized = normalizeAgentMaxConcurrentConfig(config)
+
+  try {
+    fs.mkdirSync(baseDir, { recursive: true })
+    fs.writeFileSync(configPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8')
+  } catch (error) {
+    console.log(`⚠️  Failed to persist agent max concurrency config: ${error.message}`)
+  }
+}
+
+function mergeAgentMaxConcurrentConfig(storedConfig, overrideConfig) {
+  return {
+    ...normalizeAgentMaxConcurrentConfig(storedConfig),
+    ...normalizeAgentMaxConcurrentConfig(overrideConfig)
+  }
+}
+
 function handleNew(opts) {
   if (!opts.topic) {
     console.error('Error: topic is required')
@@ -308,9 +485,13 @@ function handleNew(opts) {
 
   const { discussionId } = discussion.create(opts.topic, opts.participants, context)
 
-  // Always restart participant agents for a new discussion so they run in the
-  // current working directory and pick up this discussion immediately.
-  restartAgentsForParticipants(opts.participants, context.workingDir, baseDir)
+  // By default we restart participant agents so they run in the current
+  // working directory and pick up this discussion immediately.
+  if (opts.restartAgents !== false) {
+    restartAgentsForParticipants(opts.participants, context.workingDir, baseDir, opts.agentMaxConcurrent)
+  } else {
+    console.log('ℹ️  Skip auto-restart for participant agents (--no-restart-agents).')
+  }
 
   console.log(`✓ Discussion created: ${discussionId}`)
   console.log(`  Topic: ${opts.topic}`)
@@ -334,13 +515,18 @@ function handleNew(opts) {
  * @param {string[]} participants
  * @param {string} workingDir
  * @param {string} baseDir
+ * @param {Record<string, number>|null} agentMaxConcurrent
  */
-function restartAgentsForParticipants(participants, workingDir, baseDir) {
-  const supported = new Set(['claude', 'codex'])
+function restartAgentsForParticipants(participants, workingDir, baseDir, agentMaxConcurrent = null) {
   const uniqueParticipants = [...new Set(participants || [])]
+  const persistedAgentMaxConcurrent = readAgentMaxConcurrentConfig(baseDir)
+  const finalAgentMaxConcurrent = mergeAgentMaxConcurrentConfig(persistedAgentMaxConcurrent, agentMaxConcurrent)
+  writeAgentMaxConcurrentConfig(baseDir, finalAgentMaxConcurrent)
 
-  for (const agentName of uniqueParticipants) {
-    if (!supported.has(agentName)) {
+  for (const participantName of uniqueParticipants) {
+    const agentName = normalizeParticipantName(participantName)
+
+    if (!SUPPORTED_AUTO_RESTART_AGENTS.has(agentName)) {
       console.log(`⚠️  Skip auto-restart for unsupported agent: ${agentName}`)
       continue
     }
@@ -352,13 +538,19 @@ function restartAgentsForParticipants(participants, workingDir, baseDir) {
       stdio: 'ignore'
     })
 
-    const started = spawnSync(process.execPath, [
+    const startArgs = [
       agentCli,
       'start',
       '--nickname', agentName,
       '--working-dir', workingDir,
       '--base-dir', baseDir
-    ], {
+    ]
+    const maxConcurrent = finalAgentMaxConcurrent?.[agentName]
+    if (Number.isInteger(maxConcurrent) && maxConcurrent > 0) {
+      startArgs.push('--max-concurrent', String(maxConcurrent))
+    }
+
+    const started = spawnSync(process.execPath, startArgs, {
       stdio: 'pipe',
       encoding: 'utf8',
       cwd: workingDir
@@ -968,6 +1160,11 @@ async function main() {
   if (opts.showHelp || args.length === 0) {
     printUsage()
     process.exit(0)
+  }
+
+  if (opts.parseError) {
+    console.error(`Error: ${opts.parseError}`)
+    process.exit(1)
   }
 
   switch (opts.command) {
