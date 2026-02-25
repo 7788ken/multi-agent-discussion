@@ -13,6 +13,8 @@ import { AgentBase } from '../lib/agent-base.js'
 import { callCodex, parseCodexResponse, buildDiscussionPrompt, isCodexAvailable } from '../lib/codex-client.js'
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
+import { execFileSync } from 'child_process'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -71,7 +73,8 @@ class CodexAgent extends AgentBase {
       reasoningEffort: this.reasoningEffort,
       sandbox: this.sandbox,
       timeout: this.timeout,
-      workingDir
+      workingDir,
+      discussionId
     })
 
     if (!result.ok) {
@@ -262,8 +265,77 @@ function parseArgs(args) {
   return result
 }
 
-function getPidFile(nickname) {
+function normalizeWorkingDir(workingDir) {
+  const resolved = path.resolve(workingDir || process.cwd())
+  try {
+    return fs.realpathSync(resolved)
+  } catch {
+    return resolved
+  }
+}
+
+function getWorkingDirHash(workingDir) {
+  return crypto.createHash('sha1').update(normalizeWorkingDir(workingDir)).digest('hex').slice(0, 12)
+}
+
+function getPidFile(nickname, workingDir) {
+  return path.join(PID_DIR, `codex-agent-${nickname}-${getWorkingDirHash(workingDir)}.pid`)
+}
+
+function getLegacyPidFile(nickname) {
   return path.join(PID_DIR, `codex-agent-${nickname}.pid`)
+}
+
+function readPid(pidFile) {
+  if (!fs.existsSync(pidFile)) return null
+  const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
+  return Number.isInteger(pid) && pid > 0 ? pid : null
+}
+
+function isPidRunning(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function parseWorkingDirFromCommand(commandLine) {
+  const match = commandLine.match(/--working-dir(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/)
+  if (!match) return null
+  return match[1] || match[2] || match[3] || null
+}
+
+function isLegacyPidForWorkingDir(pid, workingDir) {
+  try {
+    const commandLine = execFileSync('ps', ['-p', String(pid), '-o', 'args='], { encoding: 'utf8' }).trim()
+    const processWorkingDir = parseWorkingDirFromCommand(commandLine)
+    if (!processWorkingDir) return false
+    return normalizeWorkingDir(processWorkingDir) === normalizeWorkingDir(workingDir)
+  } catch {
+    return false
+  }
+}
+
+function parsePidFileMeta(file) {
+  const scoped = file.match(/^codex-agent-(.+)-([a-f0-9]{12})\.pid$/)
+  if (scoped) {
+    return {
+      nickname: scoped[1],
+      scopeLabel: `wd:${scoped[2]}`
+    }
+  }
+
+  const legacy = file.match(/^codex-agent-(.+)\.pid$/)
+  if (legacy) {
+    return {
+      nickname: legacy[1],
+      scopeLabel: 'legacy'
+    }
+  }
+
+  return null
 }
 
 function getLogFile(nickname) {
@@ -273,19 +345,30 @@ function getLogFile(nickname) {
 async function handleStart(opts) {
   ensureDirs()
 
-  const pidFile = getPidFile(opts.nickname)
+  const pidFile = getPidFile(opts.nickname, opts.workingDir)
+  const legacyPidFile = getLegacyPidFile(opts.nickname)
 
   // Check if already running
-  if (fs.existsSync(pidFile)) {
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
-    try {
-      process.kill(pid, 0) // Check if process exists
-      console.log(`Codex agent already running (pid: ${pid}, nickname: ${opts.nickname})`)
+  const scopedPid = readPid(pidFile)
+  if (scopedPid && isPidRunning(scopedPid)) {
+    console.log(`Codex agent already running (pid: ${scopedPid}, nickname: ${opts.nickname})`)
+    return
+  }
+  if (fs.existsSync(pidFile) && !scopedPid) {
+    fs.rmSync(pidFile, { force: true })
+  }
+  if (scopedPid && !isPidRunning(scopedPid)) {
+    fs.rmSync(pidFile, { force: true })
+  }
+
+  const legacyPid = readPid(legacyPidFile)
+  if (legacyPid && isPidRunning(legacyPid)) {
+    if (isLegacyPidForWorkingDir(legacyPid, opts.workingDir)) {
+      console.log(`Codex agent already running (pid: ${legacyPid}, nickname: ${opts.nickname}, legacy pid)`)
       return
-    } catch {
-      // Process not running, clean up
-      fs.rmSync(pidFile, { force: true })
     }
+  } else if (fs.existsSync(legacyPidFile)) {
+    fs.rmSync(legacyPidFile, { force: true })
   }
 
   // Check if codex is available
@@ -339,23 +422,41 @@ function handleStop(opts) {
   ensureDirs()
 
   const nickname = opts.nickname || 'codex'
-  const pidFile = getPidFile(nickname)
+  const pidFile = getPidFile(nickname, opts.workingDir)
+  const legacyPidFile = getLegacyPidFile(nickname)
+  let stopped = false
 
-  if (!fs.existsSync(pidFile)) {
-    console.log(`No codex agent running with nickname: ${nickname}`)
-    return
+  const scopedPid = readPid(pidFile)
+  if (scopedPid && isPidRunning(scopedPid)) {
+    try {
+      process.kill(scopedPid, 'SIGTERM')
+      console.log(`✓ Stopped codex agent (pid: ${scopedPid}, nickname: ${nickname})`)
+    } catch {
+      console.log(`Codex agent not running (pid: ${scopedPid})`)
+    }
+    stopped = true
+  }
+  if (fs.existsSync(pidFile)) {
+    fs.rmSync(pidFile, { force: true })
   }
 
-  const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
-
-  try {
-    process.kill(pid, 'SIGTERM')
-    console.log(`✓ Stopped codex agent (pid: ${pid}, nickname: ${nickname})`)
-  } catch {
-    console.log(`Codex agent not running (pid: ${pid})`)
+  const legacyPid = readPid(legacyPidFile)
+  if (legacyPid && isPidRunning(legacyPid) && isLegacyPidForWorkingDir(legacyPid, opts.workingDir)) {
+    try {
+      process.kill(legacyPid, 'SIGTERM')
+      console.log(`✓ Stopped codex agent (pid: ${legacyPid}, nickname: ${nickname}, legacy pid)`)
+    } catch {
+      console.log(`Codex agent not running (pid: ${legacyPid})`)
+    }
+    stopped = true
+    fs.rmSync(legacyPidFile, { force: true })
+  } else if (legacyPid && !isPidRunning(legacyPid)) {
+    fs.rmSync(legacyPidFile, { force: true })
   }
 
-  fs.rmSync(pidFile, { force: true })
+  if (!stopped) {
+    console.log(`No codex agent running with nickname: ${nickname} in working dir: ${normalizeWorkingDir(opts.workingDir)}`)
+  }
 }
 
 function handleStatus(opts) {
@@ -371,19 +472,20 @@ function handleStatus(opts) {
   console.log(`Found ${files.length} codex agent(s):\n`)
 
   for (const file of files) {
-    const nickname = file.replace('codex-agent-', '').replace('.pid', '')
-    const pidFile = path.join(PID_DIR, file)
-    const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10)
+    const meta = parsePidFileMeta(file)
+    if (!meta) continue
 
-    let status = 'stopped'
-    try {
-      process.kill(pid, 0)
-      status = 'running'
-    } catch {
-      // Process not running
+    const pidFile = path.join(PID_DIR, file)
+    const pid = readPid(pidFile)
+    if (!pid) {
+      fs.rmSync(pidFile, { force: true })
+      continue
     }
 
-    console.log(`  [${status.toUpperCase()}] ${nickname} (pid: ${pid})`)
+    let status = 'stopped'
+    if (isPidRunning(pid)) status = 'running'
+
+    console.log(`  [${status.toUpperCase()}] ${meta.nickname} (${meta.scopeLabel}, pid: ${pid})`)
   }
 }
 
@@ -402,7 +504,7 @@ async function runAgent(opts) {
 
   // Write PID
   ensureDirs()
-  const pidFile = getPidFile(opts.nickname)
+  const pidFile = getPidFile(opts.nickname, opts.workingDir)
   fs.writeFileSync(pidFile, `${process.pid}\n`, 'utf8')
 
   // Cleanup on exit

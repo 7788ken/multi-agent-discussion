@@ -3,133 +3,225 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Multi-Agent Discussion UI</title>
+    <title>Multi-Agent Discussion</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="page">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Multi-Agent Discussion</p>
-          <h1>讨论控制台</h1>
+    <!-- 顶部栏 -->
+    <header class="header">
+      <button class="sidebar-toggle" id="sidebar-toggle" type="button">☰</button>
+      <div class="header-title">Multi-Agent Discussion</div>
+      <div class="header-actions">
+        <span class="discussion-status" id="discussion-status"></span>
+        <button class="btn-settings" id="btn-toggle-panel" type="button">⚙️</button>
+      </div>
+    </header>
+
+    <div class="app-container">
+      <!-- 可折叠侧边栏 -->
+      <aside class="sidebar">
+        <div class="sidebar-content">
+          <div class="sidebar-section">
+            <button class="btn-new-chat" id="new-discussion-btn" type="button">+ New discussion</button>
+          </div>
+          <div class="sidebar-section">
+            <div class="section-title">Discussions</div>
+            <div id="discussion-list" class="discussion-list"></div>
+          </div>
         </div>
-        <button id="refresh-btn" class="btn btn-secondary" type="button">刷新</button>
-      </header>
+      </aside>
 
-      <main class="layout">
-        <aside class="panel discussions-panel">
-          <div class="panel-header">
-            <h2>讨论列表</h2>
-            <div style="display: flex; align-items: center; gap: 12px;">
-              <span id="discussions-count" class="muted">0</span>
-              <button id="new-discussion-btn" class="btn btn-primary" type="button">新建讨论</button>
+      <!-- 主聊天区域 -->
+      <main class="main-content">
+        <!-- 空状态 -->
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon">💬</div>
+          <h2>Select a discussion</h2>
+          <p>Choose from existing discussions or start a new one</p>
+        </div>
+
+        <!-- 消息区域 -->
+        <div id="messages-container" class="messages-container hidden">
+          <div class="messages-header">
+            <h2 id="discussion-topic">Discussion Topic</h2>
+            <div class="discussion-meta">
+              <span id="discussion-round">Round 0</span>
+              <span id="discussion-participants"></span>
             </div>
           </div>
-          <div id="discussion-list" class="discussion-list"></div>
-        </aside>
+          <div class="messages-wrapper" id="messages-area">
+            <!-- 消息列表 -->
+          </div>
 
-        <section class="panel detail-panel">
-          <div id="empty-state" class="empty-state">请选择一个讨论查看详情</div>
-
-          <div id="detail-content" class="hidden">
-            <div class="panel-header">
-              <h2 id="detail-topic">-</h2>
-              <span id="detail-status" class="badge">-</span>
-            </div>
-
-            <div class="meta-grid">
-              <div class="meta-item">
-                <span class="meta-label">Discussion ID</span>
-                <span id="detail-id" class="meta-value">-</span>
-              </div>
-              <div class="meta-item">
-                <span class="meta-label">当前轮次</span>
-                <span id="detail-round" class="meta-value">-</span>
-              </div>
-              <div class="meta-item meta-item-full">
-                <span class="meta-label">参与者</span>
-                <span id="detail-participants" class="meta-value">-</span>
-              </div>
-              <div class="meta-item meta-item-full">
-                <span class="meta-label">协作推进模式</span>
-                <span id="detail-codev" class="meta-value">-</span>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>共识分析</h3>
-              <div id="consensus-box" class="consensus-box"></div>
-            </div>
-
-            <div class="section">
-              <h3>最近消息</h3>
-              <div id="recent-messages" class="messages"></div>
-            </div>
-
-            <div class="forms-grid">
-              <form id="mode-form" class="section card-form">
-                <h3>模式开关</h3>
-                <label class="checkbox-row">
-                  <input id="mode-enabled-input" type="checkbox" />
-                  开启协作推进模式（基于项目改动互评并给出下一步）
-                </label>
-                <button class="btn btn-secondary" type="submit">更新模式</button>
-              </form>
-
-              <form id="followup-form" class="section card-form">
-                <h3>追问</h3>
-                <label>
-                  追问内容
-                  <textarea id="followup-input" rows="3" required placeholder="请输入追问内容"></textarea>
-                </label>
-                <label>
-                  目标 Agent（可选）
-                  <select id="followup-target"></select>
-                </label>
-                <button class="btn btn-primary" type="submit">发送追问</button>
-              </form>
-
-              <form id="end-form" class="section card-form">
-                <h3>结束讨论</h3>
-                <label>
-                  最终决策
-                  <textarea id="decision-input" rows="3" placeholder="请输入最终决策"></textarea>
-                </label>
-                <label class="checkbox-row">
-                  <input id="consensus-input" type="checkbox" checked />
-                  标记为已达成共识
-                </label>
-                <button class="btn btn-danger" type="submit">结束讨论</button>
-              </form>
-
-              <form id="settings-form" class="section card-form">
-                <h3>并发设置</h3>
-                <label>
-                  Claude 并发
-                  <input id="settings-claude-concurrent" type="number" min="1" step="1" required />
-                </label>
-                <label>
-                  Codex 并发
-                  <input id="settings-codex-concurrent" type="number" min="1" step="1" required />
-                </label>
-                <label>
-                  最大重试次数（只读）
-                  <input id="settings-retry-max-attempts" type="text" readonly />
-                </label>
-                <p class="form-hint">保存后不会自动重启，右侧按钮会复制重启命令。</p>
-                <div class="form-actions">
-                  <button class="btn btn-secondary" type="submit">保存设置</button>
-                  <button id="settings-restart-agents" class="btn btn-primary" type="button" style="margin-left: 8px;">
-                    保存并复制重启命令
-                  </button>
-                </div>
-              </form>
+          <!-- 底部输入区 -->
+          <div class="input-container">
+            <div class="input-wrapper">
+              <textarea id="followup-input" placeholder="Send a followup message..."></textarea>
+              <button class="btn-send" id="btn-send" type="button">➤</button>
             </div>
           </div>
-        </section>
+        </div>
       </main>
 
-      <p id="toast" class="toast hidden"></p>
+      <!-- 右侧可展开面板（功能区域） -->
+      <aside class="panel-sidebar" id="panel-sidebar">
+        <div class="panel-content">
+          <!-- 讨论信息 -->
+          <div class="panel-section">
+            <div class="panel-section-header">
+              <h3>Discussion Info</h3>
+            </div>
+            <div class="consensus-box">
+              <div class="consensus-grid">
+                <div class="consensus-item">
+                  <div class="consensus-label">ID</div>
+                  <div class="consensus-value" id="detail-id">-</div>
+                </div>
+                <div class="consensus-item">
+                  <div class="consensus-label">Status</div>
+                  <div class="consensus-value" id="detail-status">-</div>
+                </div>
+                <div class="consensus-item">
+                  <div class="consensus-label">Co-Dev</div>
+                  <div class="consensus-value" id="detail-codev">OFF</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 共识分析 -->
+          <div class="panel-section">
+            <div class="panel-section-header">
+              <h3>Consensus Analysis</h3>
+            </div>
+            <div id="consensus-box" class="consensus-box">
+              <div class="consensus-grid">
+                <div class="consensus-item">
+                  <div class="consensus-label">Consensus</div>
+                  <div class="consensus-value" id="consensus-value">-</div>
+                </div>
+                <div class="consensus-item">
+                  <div class="consensus-label">Agreement</div>
+                  <div class="consensus-value" id="agreement-value">-</div>
+                </div>
+                <div class="consensus-item">
+                  <div class="consensus-label">Confidence</div>
+                  <div class="consensus-value" id="confidence-value">-</div>
+                </div>
+              </div>
+              <div class="opinion-row" id="opinion-row">
+                <span>Agree: 0</span>
+                <span>Disagree: 0</span>
+                <span>Neutral: 0</span>
+                <span>Alternative: 0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 模式控制 -->
+          <div class="panel-section">
+            <div class="panel-section-header">
+              <h3>Co-Dev Mode</h3>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" id="mode-enabled-input" />
+              <span>Enable collaborative mode</span>
+            </label>
+            <button class="btn btn-secondary btn-block" id="btn-update-mode" type="button">Update Mode</button>
+          </div>
+
+          <!-- 结束讨论 -->
+          <div class="panel-section">
+            <div class="panel-section-header">
+              <h3>End Discussion</h3>
+            </div>
+            <textarea id="decision-input" rows="2" placeholder="Final decision..."></textarea>
+            <label class="toggle-row">
+              <input type="checkbox" id="consensus-input" checked />
+              <span>Mark as consensus reached</span>
+            </label>
+            <button class="btn btn-danger btn-block" id="btn-end" type="button">End Discussion</button>
+          </div>
+
+          <!-- 设置 -->
+          <div class="panel-section">
+            <div class="panel-section-header">
+              <h3>Settings</h3>
+            </div>
+            <div class="settings-row">
+              <label>Claude concurrent</label>
+              <input type="number" id="settings-claude-concurrent" min="1" />
+            </div>
+            <div class="settings-row">
+              <label>Codex concurrent</label>
+              <input type="number" id="settings-codex-concurrent" min="1" />
+            </div>
+            <div class="settings-row">
+              <label>Max retries (readonly)</label>
+              <input type="text" id="settings-retry-max-attempts" readonly />
+            </div>
+            <button class="btn btn-secondary btn-block" id="btn-save-settings" type="button">Save Settings</button>
+            <button class="btn btn-primary btn-block" id="settings-restart-agents" type="button" style="margin-top: 8px;">Save & Copy Restart Commands</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <p id="toast" class="toast hidden"></p>
+
+    <!-- 新建讨论对话框 -->
+    <div class="modal-overlay hidden" id="new-discussion-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>New Discussion</h3>
+          <button class="modal-close" id="modal-close" type="button">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="new-topic">Topic</label>
+            <input type="text" id="new-topic" placeholder="Enter discussion topic..." />
+          </div>
+          <div class="form-group">
+            <label for="new-participants">Participants</label>
+            <div class="checkbox-group" id="new-participants">
+              <label class="checkbox-item">
+                <input type="checkbox" value="claude" checked />
+                <span class="checkbox-label">Claude</span>
+              </label>
+              <label class="checkbox-item">
+                <input type="checkbox" value="codex" checked />
+                <span class="checkbox-label">Codex</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-item">
+              <input type="checkbox" id="new-codev" />
+              <span class="checkbox-label">Enable Co-Dev Mode</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label for="new-base-dir">Project Path (optional)</label>
+            <div class="path-selector">
+              <input type="text" id="new-base-dir" placeholder="Click to select folder..." readonly />
+              <button class="btn btn-secondary" id="btn-browse-path" type="button">Browse</button>
+            </div>
+            <div class="file-tree hidden" id="file-tree"></div>
+          </div>
+          <div class="form-group">
+            <label for="new-content">Initial Message</label>
+            <div class="textarea-wrapper">
+              <textarea id="new-content" rows="4" placeholder="Enter the discussion content... Use @ to mention files"></textarea>
+              <div class="mention-popup hidden" id="mention-popup"></div>
+            </div>
+            <p class="form-hint">Type @ to mention files from the selected project path</p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="modal-cancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="modal-create" type="button">Create Discussion</button>
+        </div>
+      </div>
     </div>
 
     <script src="/app.js" defer></script>

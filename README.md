@@ -10,7 +10,7 @@
 - **共识分析**: 自动检测意见一致性和置信度
 - **讨论摘要**: 生成结构化的讨论总结
 - **后台 Agent**: 支持 Claude 和 Codex 后台进程自动响应
-- **简易 HTML 界面**: 本地网页查看讨论、追问与结束讨论
+- **增强 HTML 界面**: 本地网页管理讨论，支持新建对话框、文件浏览、@ 提及、Agent 并发配置
 - **协作推进模式（可开关）**: 基于项目最新改动互评、找风险，并可直接落地小改动后反馈验证结果
 
 ## 安装
@@ -154,15 +154,74 @@ node bin/codex-agent.js stop codex
 | `--nickname <name>` | Agent 昵称 |
 | `--interval <ms>` | 轮询间隔 (默认 3000ms) |
 
-## HTML UI API
+## HTML UI 使用指南
 
-`mad ui` 启动本地服务后，可使用以下 API：
+### 启动界面
 
-- `GET /api/discussions`
-- `GET /api/discussions/:id`
-- `POST /api/discussions/:id/followup`
-- `POST /api/discussions/:id/end`
-- `POST /api/discussions/:id/mode`（body: `{"enabled": true|false}`）
+```bash
+mad ui              # 启动 UI 服务器（默认端口 5188）
+mad ui --port 8080  # 自定义端口
+```
+
+### 界面功能
+
+#### 左侧栏 - 讨论列表
+- **可折叠侧边栏**: 点击 ☰ 按钮折叠/展开
+- **讨论列表**: 显示所有讨论的状态、轮次、消息数
+- **新建讨论**: 点击 "+ New discussion" 按钮
+
+#### 中间区 - 消息面板
+- **消息流**: 按时间倒序显示最近 20 条消息
+- **追问输入框**: 底部输入框发送追问（支持 @ 提及 agent）
+- **URL 状态同步**: 刷新后保持当前选中的讨论
+
+#### 右侧栏 - 设置面板（可展开）
+点击 ⚙️ 按钮展开设置面板：
+
+1. **讨论信息**: 显示 ID、状态、Co-Dev 模式
+2. **共识分析**: 可视化显示一致性、置信度、意见分布
+3. **Co-Dev 模式**: 开关协作推进模式
+4. **结束讨论**: 输入决策并结束讨论
+5. **Agent 设置**:
+   - 调整 Claude/Codex 并发限制
+   - 点击 "Save & Copy Restart Commands" 自动复制重启命令
+   - 在终端粘贴执行即可应用新配置
+
+### 新建讨论对话框
+
+点击 "+ New discussion" 后：
+
+1. **输入话题**: 必填项
+2. **选择参与者**: 默认勾选 Claude 和 Codex
+3. **Co-Dev 模式**（可选）:
+   - 勾选 "Enable Co-Dev Mode" 以在创建时开启协作推进模式
+4. **选择项目路径**（可选）:
+   - 点击 "Browse" 或输入框浏览文件系统
+   - 选择项目根目录
+   - Agent 将在该目录下工作（映射到 `workingDir`）
+   - 未选择时默认使用启动 `mad ui` 的当前目录
+5. **初始消息**（可选）:
+   - 输入 `@` 触发文件提及功能
+   - 使用方向键选择文件
+   - Enter/Tab 确认选择
+   - 支持 Ctrl+Enter 快速提交
+
+### API 端点
+
+`mad ui` 启动后提供以下 REST API：
+
+- `GET /api/discussions` - 列出所有讨论
+- `GET /api/discussions/:id` - 获取讨论详情
+- `POST /api/discussions` - 创建新讨论（body: `{"topic":"...","participants":["claude","codex"],"workingDir":".","coDevMode":{"enabled":true}}`）
+- `POST /api/discussions/:id/followup` - 发送追问（body: `{"question": "...", "target": "claude"}`）
+- `POST /api/discussions/:id/end` - 结束讨论（body: `{"decision": "...", "consensus": true}`）
+- `POST /api/discussions/:id/mode` - 切换模式（body: `{"enabled": true}`）
+- `GET /api/settings` - 获取设置
+- `POST /api/settings` - 更新设置（body: `{"agentMaxConcurrent": {"claude": 5, "codex": 5}}`）
+- `GET /api/files?path=...` - 浏览文件系统
+- `GET /api/files/search?path=...&query=...` - 搜索文件
+- `POST /api/agents/start` - 启动 agent 进程
+- `GET /api/agents/status` - 查询运行中的 agent
 
 ### Watch 模式命令
 
