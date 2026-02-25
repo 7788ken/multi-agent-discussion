@@ -764,12 +764,13 @@ async function handleCreateDiscussion() {
     closeNewDiscussionModal()
     showToast('Discussion created, starting agents...', 'success')
 
-    // 启动 agent
+    // 启动 agent（传递正确的 baseDir）
     try {
       await request('/api/agents/start', {
         method: 'POST',
         body: JSON.stringify({
           workingDir,
+          baseDir: result.baseDir || null,
           participants
         })
       })
