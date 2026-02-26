@@ -42,8 +42,8 @@ class CodexAgent extends AgentBase {
     this.model = options.model || 'gpt-5.3-codex'
     this.reasoningEffort = options.reasoningEffort || 'xhigh'
     this.sandbox = options.sandbox || 'workspace-write'
-    this.timeout = options.timeout || 300000  // 5 minutes (MCP startup + thinking takes time)
-    this.defaultWorkingDir = options.workingDir || process.cwd()
+    this.timeout = options.timeout || 120000  // 2 分钟（之前是 5 分钟）
+    this.defaultWorkingDir = options.workingDir || ''
   }
 
   /**
@@ -59,15 +59,17 @@ class CodexAgent extends AgentBase {
     const status = this.discussion.getStatus(discussionId)
     const workingDir = status.context?.workingDir || this.defaultWorkingDir
 
-    // Send thinking status
-    this.sendThinkingStatus(discussionId, round)
+    // Send initial thinking status with detail
+    this.sendThinkingStatus(discussionId, round, 'is preparing to respond...')
 
     // Build context for Codex
+    this.updateThinkingDetail(discussionId, round, 'is analyzing the discussion context...')
     const context = this.formatContextForLLM(discussionId, allMessages)
     const prompt = buildDiscussionPrompt(context, this.name, { workingDir, round })
 
     // Call Codex with the discussion's working directory
-    console.log(`[${this.name}] Calling Codex (${this.model}) in ${workingDir} for round ${round}...`)
+    this.updateThinkingDetail(discussionId, round, `is calling ${this.model} API...`)
+    console.log(`[${this.name}] Calling Codex (${this.model}) in ${workingDir || 'no working dir'} for round ${round}...`)
     const result = await callCodex(prompt, {
       model: this.model,
       reasoningEffort: this.reasoningEffort,
@@ -93,6 +95,9 @@ class CodexAgent extends AgentBase {
       }
       return
     }
+
+    // Parse response
+    this.updateThinkingDetail(discussionId, round, 'is processing the response...')
 
     let normalizedOutput = result.output
     let identityCheck = this.validateAgentOutput(normalizedOutput)

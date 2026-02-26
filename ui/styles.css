@@ -1149,3 +1149,93 @@ body {
 .hint-btn {
   white-space: nowrap;
 }
+
+/* 状态消息卡片 */
+.status-message {
+  padding: 12px 0 !important;
+  border-top: none !important;
+}
+
+.status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.status-thinking .status-card {
+  background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 100%);
+  border-color: #bfdbfe;
+}
+
+.status-retrying .status-card {
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  border-color: #fcd34d;
+}
+
+.status-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.status-avatar.claude {
+  background: #d4a574;
+  color: white;
+}
+
+.status-avatar.codex {
+  background: #7c9eb2;
+  color: white;
+}
+
+.status-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.status-agent {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.status-icon {
+  font-size: 16px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.status-timer {
+  font-size: 12px;
+  color: #6366f1;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}

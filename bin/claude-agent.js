@@ -40,8 +40,8 @@ class ClaudeAgent extends AgentBase {
     })
 
     this.model = options.model || 'sonnet'
-    this.timeout = options.timeout || 180000
-    this.defaultWorkingDir = options.workingDir || process.cwd()
+    this.timeout = options.timeout || 60000  // 60 秒（之前是 180 秒）
+    this.defaultWorkingDir = options.workingDir || ''
   }
 
   /**
@@ -57,15 +57,17 @@ class ClaudeAgent extends AgentBase {
     const status = this.discussion.getStatus(discussionId)
     const workingDir = status.context?.workingDir || this.defaultWorkingDir
 
-    // Send thinking status
-    this.sendThinkingStatus(discussionId, round)
+    // Send initial thinking status with detail
+    this.sendThinkingStatus(discussionId, round, 'is preparing to respond...')
 
     // Build context for Claude
+    this.updateThinkingDetail(discussionId, round, 'is analyzing the discussion context...')
     const context = this.formatContextForLLM(discussionId, allMessages)
     const prompt = buildDiscussionPrompt(context, this.name, { workingDir, round })
 
     // Call Claude with the discussion's working directory
-    console.log(`[${this.name}] Calling Claude (${this.model}) in ${workingDir} for round ${round}...`)
+    this.updateThinkingDetail(discussionId, round, `is calling ${this.model} API...`)
+    console.log(`[${this.name}] Calling Claude (${this.model}) in ${workingDir || 'no working dir'} for round ${round}...`)
     const result = await callClaude(prompt, {
       model: this.model,
       timeout: this.timeout,
@@ -88,6 +90,8 @@ class ClaudeAgent extends AgentBase {
       return
     }
 
+    // Parse response
+    this.updateThinkingDetail(discussionId, round, 'is processing the response...')
     let normalizedOutput = result.output
     let identityCheck = this.validateAgentOutput(normalizedOutput)
     if (!identityCheck.ok) {

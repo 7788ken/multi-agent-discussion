@@ -12,7 +12,7 @@ const state = {
   eventSource: null       // SSE 连接
 }
 
-const DEFAULT_WORKING_DIR = '.'
+const DEFAULT_WORKING_DIR = ''  // 空字符串表示不指定工作目录
 
 const elements = {}
 
@@ -201,23 +201,97 @@ function renderDiscussionList() {
     .join('')
 }
 
+// 状态计时器
+const statusTimers = new Map()
+
 function renderMessages(detail) {
   const messages = detail.recentMessages || []
+  const discussionStatus = detail.discussion?.status || 'active'
 
   if (messages.length === 0) {
     elements.messagesArea.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">No messages yet</div>'
     return
   }
 
-  elements.messagesArea.innerHTML = messages
+  // 清除旧的计时器
+  statusTimers.forEach(timer => clearInterval(timer))
+  statusTimers.clear()
+
+  // 如果讨论已结束，不显示任何 thinking/retrying 状态消息
+  const isEnded = discussionStatus === 'ended'
+
+  // 过滤状态消息：只保留每个 agent 的最新一条 thinking 消息（且讨论未结束）
+  // 从后往前遍历，记录每个 agent 第一个遇到的 thinking 消息的索引
+  const latestThinkingByAgent = new Map() // agent -> index
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    const content = msg.content || ''
+    const isThinking = msg.type === 'status' && msg.status === 'thinking' && content.includes('thinking')
+
+    if (isThinking && !latestThinkingByAgent.has(msg.from)) {
+      latestThinkingByAgent.set(msg.from, i)
+    }
+  }
+
+  // 构建过滤后的消息列表
+  const filteredMessages = []
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    const content = msg.content || ''
+    const isThinking = msg.type === 'status' && msg.status === 'thinking' && content.includes('thinking')
+    const isRetrying = msg.type === 'status' && msg.status === 'retrying'
+
+    // 如果讨论已结束，不显示任何 thinking/retrying 状态
+    if (isEnded && (isThinking || isRetrying)) {
+      continue
+    }
+
+    if (isThinking) {
+      // 只保留每个 agent 最新的 thinking 消息
+      if (latestThinkingByAgent.get(msg.from) === i) {
+        filteredMessages.push({ ...msg, _originalIndex: i })
+      }
+    } else {
+      // 其他消息全部保留
+      filteredMessages.push({ ...msg, _originalIndex: i })
+    }
+  }
+
+  elements.messagesArea.innerHTML = filteredMessages
     .map((msg) => {
       const from = msg.from || 'unknown'
       const isUser = from.toLowerCase() === 'user'
+      const isStatus = msg.type === 'status'
       const avatarClass = isUser ? 'user' :
                           from.toLowerCase().includes('claude') ? 'claude' :
                           from.toLowerCase().includes('codex') ? 'codex' : 'system'
       const displayName = isUser ? 'ME' : from
       const body = msg.content || msg.decision || msg.error || '-'
+
+      // 状态消息特殊处理
+      if (isStatus) {
+        const statusClass = msg.status === 'thinking' ? 'status-thinking' :
+                           msg.status === 'retrying' ? 'status-retrying' : 'status-info'
+        const statusIcon = msg.status === 'thinking' ? '🤔' :
+                          msg.status === 'retrying' ? '🔄' : '📋'
+        return `
+          <div class="message status-message ${statusClass}" data-msg-index="${msg._originalIndex}" data-msg-ts="${msg.ts || ''}">
+            <div class="status-card">
+              <div class="status-avatar ${avatarClass}">${from.substring(0, 2).toUpperCase()}</div>
+              <div class="status-content">
+                <div class="status-header">
+                  <span class="status-agent">${escapeHtml(displayName)}</span>
+                  <span class="status-icon">${statusIcon}</span>
+                </div>
+                <div class="status-text">${escapeHtml(body)}</div>
+                <div class="status-timer" id="timer-${msg._originalIndex}">已用时: 0秒</div>
+              </div>
+            </div>
+          </div>
+        `
+      }
+
       return `
         <div class="message ${isUser ? 'message-user' : ''}">
           ${!isUser ? `<div class="message-avatar ${avatarClass}">${from.substring(0, 2).toUpperCase()}</div>` : ''}
@@ -235,10 +309,38 @@ function renderMessages(detail) {
     })
     .join('')
 
+  // 为 thinking 状态启动计时器
+  filteredMessages.forEach((msg) => {
+    if (msg.type === 'status' && msg.status === 'thinking') {
+      startStatusTimer(msg._originalIndex, msg.ts)
+    }
+  })
+
   // 只在用户没有向上滚动时才自动滚动到底部
   if (!state.userScrolledUp) {
     elements.messagesArea.scrollTop = elements.messagesArea.scrollHeight
   }
+}
+
+function startStatusTimer(index, startTime) {
+  const timerEl = document.getElementById(`timer-${index}`)
+  if (!timerEl) return
+
+  const start = startTime ? new Date(startTime).getTime() : Date.now()
+
+  const timer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - start) / 1000)
+    const minutes = Math.floor(elapsed / 60)
+    const seconds = elapsed % 60
+
+    if (minutes > 0) {
+      timerEl.textContent = `已用时: ${minutes}分${seconds}秒`
+    } else {
+      timerEl.textContent = `已用时: ${seconds}秒`
+    }
+  }, 1000)
+
+  statusTimers.set(index, timer)
 }
 
 function renderConsensus(detail) {
