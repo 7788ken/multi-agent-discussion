@@ -479,14 +479,24 @@ function handleEndDiscussionFromHint() {
 
   const decision = 'Consensus reached - discussion ended'
   const consensus = true
+  const workingDir = state.selectedBaseDir || state.detail?.context?.workingDir
 
   try {
     request(buildDiscussionApiPath(state.selectedId, 'end', state.selectedBaseDir), {
       method: 'POST',
       body: JSON.stringify({ decision, consensus })
-    }).then(() => {
+    }).then(async () => {
       showToast('Discussion ended', 'success')
       hideConvergenceHint()
+      // 停止该目录的 agent
+      if (workingDir) {
+        try {
+          await request('/api/agents/stop', {
+            method: 'POST',
+            body: JSON.stringify({ workingDir })
+          })
+        } catch {}
+      }
       loadDiscussions()
     }).catch(err => {
       showToast(err.message, 'error')
@@ -711,6 +721,7 @@ async function handleEndDiscussion() {
 
   const decision = elements.decisionInput.value.trim()
   const consensus = Boolean(elements.consensusInput.checked)
+  const workingDir = state.selectedBaseDir || state.detail?.context?.workingDir
 
   try {
     await request(buildDiscussionApiPath(state.selectedId, 'end', state.selectedBaseDir), {
@@ -719,6 +730,15 @@ async function handleEndDiscussion() {
     })
     elements.decisionInput.value = ''
     showToast('Discussion ended', 'success')
+    // 停止该目录的 agent
+    if (workingDir) {
+      try {
+        await request('/api/agents/stop', {
+          method: 'POST',
+          body: JSON.stringify({ workingDir })
+        })
+      } catch {}
+    }
     await loadDiscussions()
   } catch (err) {
     showToast(err.message, 'error')
