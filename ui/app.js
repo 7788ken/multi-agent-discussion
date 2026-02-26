@@ -61,6 +61,7 @@ function initElements() {
   elements.btnBrowsePath = document.getElementById('btn-browse-path')
   elements.fileTree = document.getElementById('file-tree')
   elements.mentionPopup = document.getElementById('mention-popup')
+  elements.btnViewResult = document.getElementById('btn-view-result')
 }
 
 function escapeHtml(value) {
@@ -241,7 +242,14 @@ function renderMessages(detail) {
 }
 
 function renderConsensus(detail) {
+  console.log('[renderConsensus] called with detail:', detail)
   const consensus = detail.consensus || {}
+  const intervention = detail.intervention || {}
+  const roundStatus = detail.roundStatus || {}
+
+  console.log('[renderConsensus] consensus:', consensus)
+  console.log('[renderConsensus] intervention:', intervention)
+  console.log('[renderConsensus] roundStatus:', roundStatus)
 
   elements.consensusValue.textContent = consensus.hasConsensus ? 'Yes' : 'No'
   elements.agreementValue.textContent = `${Math.round((consensus.agreementLevel || 0) * 100)}%`
@@ -254,6 +262,27 @@ function renderConsensus(detail) {
     <span>Neutral: ${opinions.neutral || 0}</span>
     <span>Alternative: ${opinions.alternative || 0}</span>
   `
+
+  // 讨论收敛提示
+  // 只需要 intervention.needsIntervention 为 true 且讨论状态为 active
+  const canConclude =
+    intervention.needsIntervention &&
+    detail.discussion?.status === 'active'
+
+  // 调试日志
+  console.log('[Convergence Check]', {
+    needsIntervention: intervention.needsIntervention,
+    reason: intervention.reason,
+    suggestedAction: intervention.suggestedAction,
+    status: detail.discussion?.status,
+    canConclude
+  })
+
+  if (canConclude) {
+    showConvergenceHint(intervention.reason, intervention.suggestedAction)
+  } else {
+    hideConvergenceHint()
+  }
 }
 
 function renderDetail() {
@@ -283,8 +312,86 @@ function renderDetail() {
   elements.detailCodev.style.color = coDevEnabled ? 'var(--accent)' : 'var(--text-muted)'
   elements.modeEnabledInput.checked = coDevEnabled
 
-  renderConsensus(detail)
   renderMessages(detail)
+  renderConsensus(detail)
+}
+
+// ===== 收敛提示 =====
+function showConvergenceHint(reason, action) {
+  // 创建或更新提示区域
+  let hint = document.getElementById('convergence-hint')
+  if (!hint) {
+    hint = document.createElement('div')
+    hint.id = 'convergence-hint'
+    hint.className = 'convergence-hint'
+    // 插入到消息区域底部
+    const messagesWrapper = document.querySelector('.messages-wrapper')
+    if (messagesWrapper) {
+      messagesWrapper.appendChild(hint)
+    }
+  }
+  hint.innerHTML = `
+    <div class="hint-content">
+      <span class="hint-icon">💡</span>
+      <div class="hint-text">
+        <strong>${escapeHtml(reason || '讨论可能已收敛')}</strong>
+        <p>${escapeHtml(action || '可以结束讨论、查看结果，也可以继续追问')}</p>
+      </div>
+      <div class="hint-actions">
+        <button class="btn btn-primary hint-btn" id="hint-view-result" type="button">📄 查看讨论结果</button>
+        <button class="btn btn-danger hint-btn" id="hint-end-discussion" type="button">✓ 结束讨论</button>
+      </div>
+    </div>
+  `
+  hint.classList.remove('hidden')
+
+  // 绑定按钮点击事件
+  const viewResultBtn = hint.querySelector('#hint-view-result')
+  if (viewResultBtn) {
+    viewResultBtn.addEventListener('click', handleViewResult)
+  }
+
+  const endDiscussionBtn = hint.querySelector('#hint-end-discussion')
+  if (endDiscussionBtn) {
+    endDiscussionBtn.addEventListener('click', handleEndDiscussionFromHint)
+  }
+}
+
+function handleEndDiscussionFromHint() {
+  // 使用默认值结束讨论
+  if (!state.selectedId) return
+
+  const decision = 'Consensus reached - discussion ended'
+  const consensus = true
+
+  try {
+    request(buildDiscussionApiPath(state.selectedId, 'end', state.selectedBaseDir), {
+      method: 'POST',
+      body: JSON.stringify({ decision, consensus })
+    }).then(() => {
+      showToast('Discussion ended', 'success')
+      hideConvergenceHint()
+      loadDiscussions()
+    }).catch(err => {
+      showToast(err.message, 'error')
+    })
+  } catch (err) {
+    showToast(err.message, 'error')
+  }
+}
+
+function hideConvergenceHint() {
+  const hint = document.getElementById('convergence-hint')
+  if (hint) hint.classList.add('hidden')
+}
+
+// ===== 查看结果 =====
+function handleViewResult() {
+  if (!state.selectedId || !state.selectedBaseDir) return
+
+  // 构建结果文件路径
+  const resultUrl = `/api/discussions/${encodeURIComponent(state.selectedId)}/result?baseDir=${encodeURIComponent(state.selectedBaseDir)}`
+  window.open(resultUrl, '_blank')
 }
 
 async function loadDiscussions() {
@@ -992,6 +1099,11 @@ function bindEvents() {
   }
   if (elements.settingsRestartAgents) {
     elements.settingsRestartAgents.addEventListener('click', handleSettingsRestartAgents)
+  }
+
+  // 查看结果按钮
+  if (elements.btnViewResult) {
+    elements.btnViewResult.addEventListener('click', handleViewResult)
   }
 }
 
