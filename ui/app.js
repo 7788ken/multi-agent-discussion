@@ -12,7 +12,7 @@ const state = {
   eventSource: null       // SSE 连接
 }
 
-const DEFAULT_WORKING_DIR = ''  // 空字符串表示不指定工作目录
+const DEFAULT_WORKING_DIR = '.'  // 默认使用当前目录
 
 const elements = {}
 
@@ -220,17 +220,33 @@ function renderMessages(detail) {
   // 如果讨论已结束，不显示任何 thinking/retrying 状态消息
   const isEnded = discussionStatus === 'ended'
 
-  // 过滤状态消息：只保留每个 agent 的最新一条 thinking 消息（且讨论未结束）
-  // 从后往前遍历，记录每个 agent 第一个遇到的 thinking 消息的索引
+  // 找出每个 agent 是否已经回复（有 response 消息）
+  // 以及每个 agent 最新的 thinking/retrying 消息索引
+  const agentHasResponded = new Set() // agent -> hasResponded
   const latestThinkingByAgent = new Map() // agent -> index
+  const latestRetryingByAgent = new Map() // agent -> index
 
+  // 从后往前遍历
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
     const content = msg.content || ''
     const isThinking = msg.type === 'status' && msg.status === 'thinking' && content.includes('thinking')
+    const isRetrying = msg.type === 'status' && msg.status === 'retrying'
+    const isResponse = msg.type === 'response'
 
+    // 如果 agent 有 response 消息，标记为已回复
+    if (isResponse && !agentHasResponded.has(msg.from)) {
+      agentHasResponded.add(msg.from)
+    }
+
+    // 记录每个 agent 最新的 thinking 消息
     if (isThinking && !latestThinkingByAgent.has(msg.from)) {
       latestThinkingByAgent.set(msg.from, i)
+    }
+
+    // 记录每个 agent 最新的 retrying 消息
+    if (isRetrying && !latestRetryingByAgent.has(msg.from)) {
+      latestRetryingByAgent.set(msg.from, i)
     }
   }
 
@@ -248,8 +264,21 @@ function renderMessages(detail) {
     }
 
     if (isThinking) {
+      // 如果 agent 已经回复，不显示 thinking 状态
+      if (agentHasResponded.has(msg.from)) {
+        continue
+      }
       // 只保留每个 agent 最新的 thinking 消息
       if (latestThinkingByAgent.get(msg.from) === i) {
+        filteredMessages.push({ ...msg, _originalIndex: i })
+      }
+    } else if (isRetrying) {
+      // 如果 agent 已经回复，不显示 retrying 状态
+      if (agentHasResponded.has(msg.from)) {
+        continue
+      }
+      // 只保留每个 agent 最新的 retrying 消息
+      if (latestRetryingByAgent.get(msg.from) === i) {
         filteredMessages.push({ ...msg, _originalIndex: i })
       }
     } else {
@@ -344,14 +373,9 @@ function startStatusTimer(index, startTime) {
 }
 
 function renderConsensus(detail) {
-  console.log('[renderConsensus] called with detail:', detail)
   const consensus = detail.consensus || {}
   const intervention = detail.intervention || {}
   const roundStatus = detail.roundStatus || {}
-
-  console.log('[renderConsensus] consensus:', consensus)
-  console.log('[renderConsensus] intervention:', intervention)
-  console.log('[renderConsensus] roundStatus:', roundStatus)
 
   elements.consensusValue.textContent = consensus.hasConsensus ? 'Yes' : 'No'
   elements.agreementValue.textContent = `${Math.round((consensus.agreementLevel || 0) * 100)}%`
@@ -366,19 +390,9 @@ function renderConsensus(detail) {
   `
 
   // 讨论收敛提示
-  // 只需要 intervention.needsIntervention 为 true 且讨论状态为 active
   const canConclude =
     intervention.needsIntervention &&
     detail.discussion?.status === 'active'
-
-  // 调试日志
-  console.log('[Convergence Check]', {
-    needsIntervention: intervention.needsIntervention,
-    reason: intervention.reason,
-    suggestedAction: intervention.suggestedAction,
-    status: detail.discussion?.status,
-    canConclude
-  })
 
   if (canConclude) {
     showConvergenceHint(intervention.reason, intervention.suggestedAction)
@@ -721,7 +735,8 @@ const fileCache = {
 function openNewDiscussionModal() {
   // 重置表单
   elements.newTopic.value = ''
-  elements.newBaseDir.value = ''
+  // 默认使用服务端返回的项目目录
+  elements.newBaseDir.value = state.settings?.primaryBaseDir || ''
   elements.newContent.value = ''
   elements.newCoDev.checked = false
   elements.fileTree.classList.add('hidden')
@@ -1237,7 +1252,7 @@ function connectSSE() {
     state.eventSource = new EventSource('/api/events')
 
     state.eventSource.addEventListener('connected', () => {
-      console.log('SSE connected')
+      // SSE connected
     })
 
     state.eventSource.addEventListener('discussion-update', (event) => {
@@ -1255,7 +1270,6 @@ function connectSSE() {
     })
 
     state.eventSource.onerror = () => {
-      console.log('SSE connection lost, reconnecting...')
       // 5秒后重连
       setTimeout(() => {
         if (state.eventSource) {
